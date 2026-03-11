@@ -44,7 +44,9 @@ func main() {
 }
 ```
 
-Built-in profiles: `Chrome()`, `Firefox()`, `Safari()`.
+Built-in profiles: `Chrome()`, `Firefox()`, `Safari()`, `Edge()`, `Brave()`.
+
+Profiles configure TLS and HTTP/2 connection-level fingerprinting (ClientHello, SETTINGS, WINDOW_UPDATE, pseudo-header order, and init PRIORITY frames). Per-request header ordering should be set via `Request.HeaderOrder` or `Fingerprint.HeaderOrder` as needed, since it varies by request type.
 
 ### Custom fingerprint
 
@@ -91,6 +93,29 @@ req, _ := http.NewRequest("GET", "https://example.com", nil)
 req.HeaderOrder = []string{"Accept", "User-Agent", "Accept-Encoding"}
 ```
 
+### Validating a fingerprint
+
+Use `Validate()` to catch misconfigurations early:
+
+```go
+fp := &http.Fingerprint{
+	PseudoHeaderOrder: []string{":method", ":path"},
+}
+if err := fp.Validate(); err != nil {
+	log.Fatal(err) // "PseudoHeaderOrder has 2 entries, want 4"
+}
+```
+
+`Validate()` checks for: missing pseudo-headers, duplicate H2 setting IDs, invalid PRIORITY stream IDs, and non-canonical header keys.
+
+### Cloning a fingerprint
+
+```go
+fp := http.Chrome()
+custom := fp.Clone()
+custom.HeaderOrder = []string{"Host", "User-Agent", "Accept"}
+```
+
 ### No fingerprint (standard behavior)
 
 When `Fingerprint` is nil, the Transport behaves identically to the standard library. There are zero changes to default behavior.
@@ -101,11 +126,11 @@ All modifications are additive. Existing behavior is preserved when `Fingerprint
 
 ### New files
 
-| File             | Purpose                                                                                  |
-| ---------------- | ---------------------------------------------------------------------------------------- |
-| `fingerprint.go` | `Fingerprint`, `H2Fingerprint`, `H2Priority`, `H2Setting` types and setting ID constants |
-| `profile.go`     | `Browser`/`Platform` enums, `Chrome()`, `Firefox()`, `Safari()` profile constructors     |
-| `utls.go`        | `utlsConn` wrapper, `addTLSFingerprint()`, `convertUTLSConnectionState()`                |
+| File             | Purpose                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `fingerprint.go` | `Fingerprint`, `H2Fingerprint`, `H2Priority`, `H2PriorityFrame`, `H2Setting`, `H2SettingID` types, `Clone()`, and `Validate()` |
+| `profile.go`     | `Browser`/`Platform` enums, `Chrome()`, `Firefox()`, `Safari()`, `Edge()`, `Brave()` profile constructors                      |
+| `utls.go`        | `utlsConn` wrapper, `addTLSFingerprint()`, `convertUTLSConnectionState()`                                                     |
 
 ### Modified files
 
@@ -125,3 +150,15 @@ All modifications are additive. Existing behavior is preserved when `Fingerprint
 - **HTTP/2 SETTINGS frame**: The SETTINGS frame sent during connection setup uses the exact settings and order from `Fingerprint.H2.Settings`.
 - **HTTP/2 WINDOW_UPDATE**: The initial connection-level window update uses `Fingerprint.H2.ConnectionFlow`.
 - **HTTP/2 HEADERS priority**: HEADERS frames include the priority signal from `Fingerprint.H2.HeaderPriority`.
+- **HTTP/2 init PRIORITY frames**: Standalone PRIORITY frames sent during connection initialization to establish a dependency tree (part of the Akamai HTTP/2 fingerprint). Configured via `Fingerprint.H2.InitPriorityFrames`. Firefox's profile includes these by default.
+- **Fingerprint validation**: `Fingerprint.Validate()` catches common misconfigurations (missing pseudo-headers, duplicate setting IDs, invalid stream IDs, non-canonical header keys).
+
+## Testing
+
+```bash
+# Unit tests (no network required)
+go test -run "TestFingerprint_|TestHeader_|TestH2SettingID" -v .
+
+# Integration tests (requires network, hits tls.peet.ws)
+go test -tags integration -run "TestIntegration_" -v .
+```

@@ -389,7 +389,7 @@ func (t *Transport) Clone() *Transport {
 		}
 		t2.TLSNextProto = npm
 	}
-	t2.Fingerprint = cloneFingerprint(t.Fingerprint)
+	t2.Fingerprint = t.Fingerprint.Clone()
 	return t2
 }
 

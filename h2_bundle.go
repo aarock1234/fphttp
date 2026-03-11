@@ -8183,6 +8183,20 @@ func (t *http2Transport) newClientConn(c net.Conn, singleUse bool, internalState
 		cc.fr.WriteWindowUpdate(0, uint32(conf.MaxUploadBufferPerConnection))
 		cc.inflow.init(conf.MaxUploadBufferPerConnection + http2initialWindowSize)
 	}
+
+	// Send PRIORITY frames for placeholder streams during connection
+	// initialization. These establish a dependency tree that is part
+	// of the Akamai HTTP/2 fingerprint.
+	if t.fingerprint != nil {
+		for _, pf := range t.fingerprint.H2.InitPriorityFrames {
+			cc.fr.WritePriority(pf.StreamID, http2PriorityParam{
+				StreamDep: pf.StreamDep,
+				Exclusive: pf.Exclusive,
+				Weight:    pf.Weight,
+			})
+		}
+	}
+
 	cc.bw.Flush()
 	if cc.werr != nil {
 		cc.Close()
