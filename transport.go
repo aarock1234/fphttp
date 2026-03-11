@@ -311,6 +311,17 @@ type Transport struct {
 	// If ForceAttemptHTTP2 is true, or if TLSNextProto contains an "h2" entry,
 	// the default is HTTP/1 and HTTP/2.
 	Protocols *Protocols
+
+	// Fingerprint configures TLS and HTTP/2 fingerprinting behavior.
+	// When non-nil, the Transport uses uTLS for TLS handshakes and
+	// applies the specified HTTP/2 connection parameters (SETTINGS
+	// frame values, WINDOW_UPDATE, pseudo-header order, and header
+	// ordering).
+	//
+	// When nil, the Transport uses standard Go crypto/tls and
+	// default HTTP/2 parameters. This preserves full backward
+	// compatibility with the standard library.
+	Fingerprint *Fingerprint
 }
 
 func (t *Transport) writeBufferSize() int {
@@ -378,6 +389,7 @@ func (t *Transport) Clone() *Transport {
 		}
 		t2.TLSNextProto = npm
 	}
+	t2.Fingerprint = cloneFingerprint(t.Fingerprint)
 	return t2
 }
 
@@ -1713,6 +1725,13 @@ func (t *Transport) decConnsPerHost(key connectMethodKey) {
 // tunnel, this function establishes a nested TLS session inside the encrypted channel.
 // The remote endpoint's name may be overridden by TLSClientConfig.ServerName.
 func (pconn *persistConn) addTLS(ctx context.Context, name string, trace *httptrace.ClientTrace) error {
+	// When a fingerprint is configured and we are not restricted to
+	// HTTP/1.1 only, use uTLS for the handshake to produce a
+	// browser-like ClientHello.
+	if fp := pconn.t.Fingerprint; fp != nil && !pconn.cacheKey.onlyH1 {
+		return pconn.addTLSFingerprint(ctx, name, trace, fp)
+	}
+
 	// Initiate TLS and check remote host name against certificate.
 	cfg := cloneTLSConfig(pconn.t.TLSClientConfig)
 	if cfg.ServerName == "" {
@@ -1951,7 +1970,12 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod, isClientConn
 		t.Protocols.UnencryptedHTTP2() &&
 		!t.Protocols.HTTP1()
 
-	if isClientConn && (unencryptedHTTP2 || (pconn.tlsState != nil && pconn.tlsState.NegotiatedProtocol == "h2")) {
+	// When using uTLS for fingerprinting, pconn.conn is a *utlsConn, not
+	// a *tls.Conn. The TLSNextProto path (below) type-asserts *tls.Conn
+	// and would panic. Route fingerprinted H2 connections through
+	// newClientConner instead, which only requires net.Conn.
+	useNewClientConner := isClientConn || t.Fingerprint != nil
+	if useNewClientConner && (unencryptedHTTP2 || (pconn.tlsState != nil && pconn.tlsState.NegotiatedProtocol == "h2")) {
 		altProto, _ := t.altProto.Load().(map[string]RoundTripper)
 		h2, ok := altProto["https"].(newClientConner)
 		if !ok {
@@ -2653,7 +2677,11 @@ func (pc *persistConn) writeLoop() {
 		select {
 		case wr := <-pc.writech:
 			startBytesWritten := pc.nwrite
-			err := wr.req.Request.write(pc.bw, pc.isProxy, wr.req.extra, pc.waitForContinue(wr.continueCh))
+			var headerOrder []string
+			if fp := pc.t.Fingerprint; fp != nil {
+				headerOrder = fp.HeaderOrder
+			}
+			err := wr.req.Request.write(pc.bw, pc.isProxy, wr.req.extra, pc.waitForContinue(wr.continueCh), headerOrder)
 			if bre, ok := err.(requestBodyReadError); ok {
 				err = bre.error
 				// Errors reading from the user's

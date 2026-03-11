@@ -201,6 +201,17 @@ type EncodeHeadersParam struct {
 	// DefaultUserAgent is the User-Agent header to send when the request
 	// neither contains a User-Agent nor disables it.
 	DefaultUserAgent string
+
+	// PseudoHeaderOrder, when non-nil, specifies the order in which
+	// HTTP/2 pseudo-headers (:method, :authority, :scheme, :path) are
+	// written. If nil, the default order is used.
+	PseudoHeaderOrder []string
+
+	// HeaderOrder, when non-nil, specifies the order in which regular
+	// (non-pseudo) headers are written. Headers present in the request
+	// but absent from this list are appended after the ordered headers.
+	// If nil, headers are written in Go map iteration order.
+	HeaderOrder []string
 }
 
 // EncodeHeadersResult is the result of EncodeHeaders.
@@ -283,20 +294,43 @@ func EncodeHeaders(ctx context.Context, param EncodeHeadersParam, headerf func(n
 
 	enumerateHeaders := func(f func(name, value string)) {
 		// 8.1.2.3 Request Pseudo-Header Fields
-		// The :path pseudo-header field includes the path and query parts of the
-		// target URI (the path-absolute production and optionally a '?' character
-		// followed by the query production, see Sections 3.3 and 3.4 of
-		// [RFC3986]).
-		f(":authority", host)
+		// The :path pseudo-header field includes the path and query parts
+		// of the target URI.
 		m := req.Method
 		if m == "" {
 			m = "GET"
 		}
-		f(":method", m)
-		if !isNormalConnect {
-			f(":path", path)
-			f(":scheme", req.URL.Scheme)
+
+		// Build the pseudo-header values available for this request.
+		pseudoValues := map[string]string{
+			":authority": host,
+			":method":    m,
 		}
+		if !isNormalConnect {
+			pseudoValues[":path"] = path
+			pseudoValues[":scheme"] = req.URL.Scheme
+		}
+
+		// Emit pseudo-headers in the configured order, falling back to
+		// the standard Go default (:authority, :method, :path, :scheme).
+		pseudoOrder := param.PseudoHeaderOrder
+		if len(pseudoOrder) == 0 {
+			pseudoOrder = []string{":authority", ":method", ":path", ":scheme"}
+		}
+		emittedPseudo := make(map[string]bool, len(pseudoOrder))
+		for _, name := range pseudoOrder {
+			if val, ok := pseudoValues[name]; ok {
+				f(name, val)
+				emittedPseudo[name] = true
+			}
+		}
+		// Emit any pseudo-headers not in the order (e.g. from future extensions).
+		for name, val := range pseudoValues {
+			if !emittedPseudo[name] {
+				f(name, val)
+			}
+		}
+
 		if protocol != "" {
 			f(":protocol", protocol)
 		}
@@ -304,8 +338,42 @@ func EncodeHeaders(ctx context.Context, param EncodeHeadersParam, headerf func(n
 			f("trailer", trailers)
 		}
 
+		// Build the regular header iteration sequence. When HeaderOrder
+		// is provided, headers listed in the order are emitted first,
+		// followed by any remaining headers.
+		type headerEntry struct {
+			key    string
+			values []string
+		}
+
+		var entries []headerEntry
+		if len(param.HeaderOrder) > 0 {
+			written := make(map[string]bool, len(param.HeaderOrder))
+			for _, k := range param.HeaderOrder {
+				if written[k] {
+					continue
+				}
+				vv, ok := req.Header[k]
+				if !ok {
+					continue
+				}
+				written[k] = true
+				entries = append(entries, headerEntry{k, vv})
+			}
+			for k, vv := range req.Header {
+				if !written[k] {
+					entries = append(entries, headerEntry{k, vv})
+				}
+			}
+		} else {
+			for k, vv := range req.Header {
+				entries = append(entries, headerEntry{k, vv})
+			}
+		}
+
 		var didUA bool
-		for k, vv := range req.Header {
+		for _, entry := range entries {
+			k, vv := entry.key, entry.values
 			if asciiEqualFold(k, "host") || asciiEqualFold(k, "content-length") {
 				// Host is :authority, already sent.
 				// Content-Length is automatic, set below.

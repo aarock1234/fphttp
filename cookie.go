@@ -517,7 +517,8 @@ func sanitizeCookieValue(v string, quoted bool) string {
 }
 
 func validCookieValueByte(b byte) bool {
-	return 0x20 <= b && b < 0x7f && b != '"' && b != ';' && b != '\\'
+	// github.com/aarock1234/fphttp allows double quotes in cookie value
+	return 0x20 <= b && b < 0x7f && /* b != '"' && */ b != ';' && b != '\\'
 }
 
 // path-av           = "Path=" path-value
