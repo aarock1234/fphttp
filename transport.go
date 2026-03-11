@@ -1986,7 +1986,7 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod, isClientConn
 			pconn.conn.Close()
 			return nil, err
 		}
-		return &persistConn{t: t, cacheKey: pconn.cacheKey, alt: alt, isClientConn: true}, nil
+		return &persistConn{t: t, cacheKey: pconn.cacheKey, alt: alt, isClientConn: isClientConn}, nil
 	}
 
 	if unencryptedHTTP2 {
