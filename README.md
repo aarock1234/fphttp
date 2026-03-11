@@ -130,7 +130,7 @@ All modifications are additive. Existing behavior is preserved when `Fingerprint
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `fingerprint.go` | `Fingerprint`, `H2Fingerprint`, `H2Priority`, `H2PriorityFrame`, `H2Setting`, `H2SettingID` types, `Clone()`, and `Validate()` |
 | `profile.go`     | `Browser`/`Platform` enums, `Chrome()`, `Firefox()`, `Safari()`, `Edge()`, `Brave()` profile constructors                      |
-| `utls.go`        | `utlsConn` wrapper, `addTLSFingerprint()`, `convertUTLSConnectionState()`                                                     |
+| `utls.go`        | `utlsConn` wrapper, `addTLSFingerprint()`, `convertUTLSConnectionState()`                                                      |
 
 ### Modified files
 
