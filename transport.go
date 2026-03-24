@@ -487,13 +487,15 @@ func (t *Transport) protocols() Protocols {
 		if t.TLSNextProto["h2"] != nil {
 			p.SetHTTP2(true)
 		}
-	case !t.ForceAttemptHTTP2 && (t.TLSClientConfig != nil || t.Dial != nil || t.DialContext != nil || t.hasCustomTLSDialer()):
+	case !t.ForceAttemptHTTP2 && t.Fingerprint == nil && (t.TLSClientConfig != nil || t.Dial != nil || t.DialContext != nil || t.hasCustomTLSDialer()):
 		// Be conservative and don't automatically enable
 		// http2 if they've specified a custom TLS config or
 		// custom dialers. Let them opt-in themselves via
 		// Transport.Protocols.SetHTTP2(true) so we don't surprise them
 		// by modifying their tls.Config. Issue 14275.
 		// However, if ForceAttemptHTTP2 is true, it overrides the above checks.
+		// Fingerprint also overrides: browser fingerprints negotiate h2
+		// via ALPN, so the bundled HTTP/2 transport must be initialized.
 	case http2client.Value() == "0":
 	default:
 		p.SetHTTP2(true)
@@ -1976,17 +1978,23 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod, isClientConn
 	// newClientConner instead, which only requires net.Conn.
 	useNewClientConner := isClientConn || t.Fingerprint != nil
 	if useNewClientConner && (unencryptedHTTP2 || (pconn.tlsState != nil && pconn.tlsState.NegotiatedProtocol == "h2")) {
-		altProto, _ := t.altProto.Load().(map[string]RoundTripper)
-		h2, ok := altProto["https"].(newClientConner)
-		if !ok {
-			return nil, errors.New("http: HTTP/2 implementation does not support NewClientConn (update golang.org/x/net?)")
+		// Respect the transport's protocol configuration. When HTTP/2 is
+		// disabled (e.g. Protocols set to HTTP/1-only), fall through to
+		// HTTP/1.1 even if TLS negotiated h2 via the browser fingerprint's ALPN.
+		if p := t.protocols(); isClientConn || p.HTTP2() || p.UnencryptedHTTP2() {
+			altProto, _ := t.altProto.Load().(map[string]RoundTripper)
+			h2, ok := altProto["https"].(newClientConner)
+			if !ok {
+				return nil, errors.New("http: HTTP/2 implementation does not support NewClientConn (update golang.org/x/net?)")
+			}
+			alt, err := h2.NewClientConn(pconn.conn, internalStateHook)
+			if err != nil {
+				pconn.conn.Close()
+				return nil, err
+			}
+
+			return &persistConn{t: t, cacheKey: pconn.cacheKey, alt: alt, isClientConn: isClientConn}, nil
 		}
-		alt, err := h2.NewClientConn(pconn.conn, internalStateHook)
-		if err != nil {
-			pconn.conn.Close()
-			return nil, err
-		}
-		return &persistConn{t: t, cacheKey: pconn.cacheKey, alt: alt, isClientConn: isClientConn}, nil
 	}
 
 	if unencryptedHTTP2 {
