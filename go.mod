@@ -1,6 +1,6 @@
 module github.com/aarock1234/fphttp
 
-go 1.26.1
+go 1.26.2
 
 require (
 	github.com/refraction-networking/utls v1.8.2
