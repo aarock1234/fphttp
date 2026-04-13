@@ -42,3 +42,4 @@ jobs:
           branch: sync/stdlib-${{ steps.version.outputs.tag }}
           title: "sync: update net/http from Go ${{ steps.version.outputs.tag }}"
           body: "Synced from [src/net/http](https://github.com/golang/go/tree/${{ steps.version.outputs.tag }}/src/net/http) in Go ${{ steps.version.outputs.tag }}."
+          delete-branch: true
