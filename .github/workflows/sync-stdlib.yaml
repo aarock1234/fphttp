@@ -18,24 +18,59 @@ jobs:
         id: version
         run: |
           version=$(curl -sf 'https://go.dev/dl/?mode=json' | jq -r '.[0].version')
+          base=$(cat .stdlib-version 2>/dev/null || echo "")
+
+          if [ "$base" = "$version" ]; then
+            echo "already at $version"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
           echo "tag=$version" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
 
       - name: Sync upstream files
+        if: steps.version.outputs.skip == 'false'
         run: |
-          version="${{ steps.version.outputs.tag }}"
-          curl -sfL "https://github.com/golang/go/archive/refs/tags/${version}.tar.gz" -o /tmp/go.tar.gz
+          new="${{ steps.version.outputs.tag }}"
+          base="${{ steps.version.outputs.base }}"
 
-          root=$(tar tf /tmp/go.tar.gz 2>/dev/null | head -1 | cut -d'/' -f1)
-          mkdir -p /tmp/upstream
-          tar xzf /tmp/go.tar.gz -C /tmp/upstream --strip-components=4 "${root}/src/net/http/"
+          # download new upstream
+          curl -sfL "https://github.com/golang/go/archive/refs/tags/${new}.tar.gz" -o /tmp/new.tar.gz
+          root=$(tar tf /tmp/new.tar.gz 2>/dev/null | head -1 | cut -d'/' -f1)
+          mkdir -p /tmp/new
+          tar xzf /tmp/new.tar.gz -C /tmp/new --strip-components=4 "${root}/src/net/http/"
 
-          find /tmp/upstream -type f -print0 | while IFS= read -r -d '' file; do
-            rel="${file#/tmp/upstream/}"
+          # download base upstream for three-way merge
+          if [ -n "$base" ]; then
+            curl -sfL "https://github.com/golang/go/archive/refs/tags/${base}.tar.gz" -o /tmp/base.tar.gz
+            root=$(tar tf /tmp/base.tar.gz 2>/dev/null | head -1 | cut -d'/' -f1)
+            mkdir -p /tmp/base
+            tar xzf /tmp/base.tar.gz -C /tmp/base --strip-components=4 "${root}/src/net/http/"
+          fi
+
+          find /tmp/new -type f -print0 | while IFS= read -r -d '' file; do
+            rel="${file#/tmp/new/}"
             case "$rel" in *_test.go) continue ;; esac
-            [ -f "./$rel" ] && cp "$file" "./$rel"
+            [ -f "./$rel" ] || continue
+
+            if [ -n "$base" ] && [ -f "/tmp/base/$rel" ]; then
+              # three-way merge: preserves local modifications, applies upstream delta
+              git merge-file -L ours -L base -L upstream "./$rel" "/tmp/base/$rel" "/tmp/new/$rel" || true
+            else
+              cp "$file" "./$rel"
+            fi
           done
 
+          echo "$new" > .stdlib-version
+
+          # update go directive in go.mod
+          go_version="${new#go}"
+          sed -i "s/^go .*/go $go_version/" go.mod
+
       - name: Create PR
+        if: steps.version.outputs.skip == 'false'
         uses: peter-evans/create-pull-request@v8
         with:
           commit-message: "sync: update net/http from Go ${{ steps.version.outputs.tag }}"
