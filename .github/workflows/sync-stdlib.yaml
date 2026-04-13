@@ -1,0 +1,44 @@
+name: Sync net/http from Go stdlib
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve Go version
+        id: version
+        run: |
+          version=$(curl -sf 'https://go.dev/dl/?mode=json' | jq -r '.[0].version')
+          echo "tag=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Sync upstream files
+        run: |
+          version="${{ steps.version.outputs.tag }}"
+          curl -sfL "https://github.com/golang/go/archive/refs/tags/${version}.tar.gz" -o /tmp/go.tar.gz
+
+          root=$(tar tf /tmp/go.tar.gz | head -1 | cut -d'/' -f1)
+          mkdir -p /tmp/upstream
+          tar xzf /tmp/go.tar.gz -C /tmp/upstream --strip-components=4 "${root}/src/net/http/"
+
+          find /tmp/upstream -type f -print0 | while IFS= read -r -d '' file; do
+            rel="${file#/tmp/upstream/}"
+            case "$rel" in *_test.go) continue ;; esac
+            [ -f "./$rel" ] && cp "$file" "./$rel"
+          done
+
+      - name: Create PR
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "sync: update net/http from Go ${{ steps.version.outputs.tag }}"
+          branch: sync/stdlib-${{ steps.version.outputs.tag }}
+          title: "sync: update net/http from Go ${{ steps.version.outputs.tag }}"
+          body: "Synced from [src/net/http](https://github.com/golang/go/tree/${{ steps.version.outputs.tag }}/src/net/http) in Go ${{ steps.version.outputs.tag }}."
