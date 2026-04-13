@@ -25,7 +25,7 @@ jobs:
           version="${{ steps.version.outputs.tag }}"
           curl -sfL "https://github.com/golang/go/archive/refs/tags/${version}.tar.gz" -o /tmp/go.tar.gz
 
-          root=$(tar tf /tmp/go.tar.gz | head -1 | cut -d'/' -f1)
+          root=$(tar tf /tmp/go.tar.gz 2>/dev/null | head -1 | cut -d'/' -f1)
           mkdir -p /tmp/upstream
           tar xzf /tmp/go.tar.gz -C /tmp/upstream --strip-components=4 "${root}/src/net/http/"
 
