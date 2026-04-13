@@ -9,9 +9,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp/internal/godebug"
+	"internal/godebug"
 	"io"
 	"maps"
+	"net/http/httptrace"
+	"net/http/internal"
+	"net/http/internal/ascii"
 	"net/textproto"
 	"reflect"
 	"slices"
@@ -19,10 +22,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal"
-	"github.com/aarock1234/fphttp/internal/ascii"
 
 	"golang.org/x/net/http/httpguts"
 )

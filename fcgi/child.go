@@ -10,14 +10,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"net"
+	"net/http"
+	"net/http/cgi"
 	"os"
 	"strings"
 	"time"
-
-	"github.com/aarock1234/fphttp/cgi"
 )
 
 // request holds the state for an in-progress request. As soon as it's complete,

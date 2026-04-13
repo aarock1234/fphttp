@@ -7,8 +7,8 @@ package httptest
 import (
 	"bytes"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
+	"net/http"
 	"net/textproto"
 	"strconv"
 	"strings"

@@ -9,10 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http/httptrace"
 	"net/url"
 	"sync"
-
-	"github.com/aarock1234/fphttp/httptrace"
 )
 
 // A ClientConn is a client connection to an HTTP server.

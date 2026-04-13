@@ -34,6 +34,8 @@ import (
 	"math/bits"
 	mathrand "math/rand"
 	"net"
+	"net/http/httptrace"
+	"net/http/internal/httpcommon"
 	"net/textproto"
 	"net/url"
 	"os"
@@ -45,9 +47,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/httpcommon"
 
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2/hpack"
@@ -7473,10 +7472,6 @@ type http2Transport struct {
 	// RoundTrip method, etc).
 	t1 *Transport
 
-	// fingerprint, if non-nil, configures HTTP/2 connection
-	// parameters for browser fingerprinting. Copied from t1.Fingerprint.
-	fingerprint *Fingerprint
-
 	connPoolOnce  sync.Once
 	connPoolOrDef http2ClientConnPool // non-nil version of ConnPool
 
@@ -7531,9 +7526,8 @@ func http2ConfigureTransports(t1 *Transport) (*http2Transport, error) {
 func http2configureTransports(t1 *Transport) (*http2Transport, error) {
 	connPool := new(http2clientConnPool)
 	t2 := &http2Transport{
-		ConnPool:    http2noDialClientConnPool{connPool},
-		t1:          t1,
-		fingerprint: t1.Fingerprint,
+		ConnPool: http2noDialClientConnPool{connPool},
+		t1:       t1,
 	}
 	connPool.t = t2
 	if err := http2registerHTTPSProtocol(t1, http2noDialH2RoundTripper{t2}); err != nil {
@@ -8146,57 +8140,22 @@ func (t *http2Transport) newClientConn(c net.Conn, singleUse bool, internalState
 		cc.tlsState = &state
 	}
 
-	// Build SETTINGS frame. When a fingerprint is configured, use the
-	// fingerprint's settings (preserving order) instead of the Go defaults.
-	var initialSettings []http2Setting
-	if t.fingerprint != nil && len(t.fingerprint.H2.Settings) > 0 {
-		for _, s := range t.fingerprint.H2.Settings {
-			initialSettings = append(initialSettings, http2Setting{
-				ID:  http2SettingID(s.ID),
-				Val: s.Val,
-			})
-		}
-	} else {
-		initialSettings = []http2Setting{
-			{ID: http2SettingEnablePush, Val: 0},
-			{ID: http2SettingInitialWindowSize, Val: uint32(cc.initialStreamRecvWindowSize)},
-		}
-		initialSettings = append(initialSettings, http2Setting{ID: http2SettingMaxFrameSize, Val: conf.MaxReadFrameSize})
-		if max := t.maxHeaderListSize(); max != 0 {
-			initialSettings = append(initialSettings, http2Setting{ID: http2SettingMaxHeaderListSize, Val: max})
-		}
-		if maxHeaderTableSize != http2initialHeaderTableSize {
-			initialSettings = append(initialSettings, http2Setting{ID: http2SettingHeaderTableSize, Val: maxHeaderTableSize})
-		}
+	initialSettings := []http2Setting{
+		{ID: http2SettingEnablePush, Val: 0},
+		{ID: http2SettingInitialWindowSize, Val: uint32(cc.initialStreamRecvWindowSize)},
+	}
+	initialSettings = append(initialSettings, http2Setting{ID: http2SettingMaxFrameSize, Val: conf.MaxReadFrameSize})
+	if max := t.maxHeaderListSize(); max != 0 {
+		initialSettings = append(initialSettings, http2Setting{ID: http2SettingMaxHeaderListSize, Val: max})
+	}
+	if maxHeaderTableSize != http2initialHeaderTableSize {
+		initialSettings = append(initialSettings, http2Setting{ID: http2SettingHeaderTableSize, Val: maxHeaderTableSize})
 	}
 
 	cc.bw.Write(http2clientPreface)
 	cc.fr.WriteSettings(initialSettings...)
-
-	// Send connection-level WINDOW_UPDATE. When fingerprinted, use
-	// the fingerprint's ConnectionFlow value; otherwise use the
-	// standard Go default.
-	if t.fingerprint != nil && t.fingerprint.H2.ConnectionFlow > 0 {
-		cc.fr.WriteWindowUpdate(0, t.fingerprint.H2.ConnectionFlow)
-		cc.inflow.init(int32(t.fingerprint.H2.ConnectionFlow) + http2initialWindowSize)
-	} else {
-		cc.fr.WriteWindowUpdate(0, uint32(conf.MaxUploadBufferPerConnection))
-		cc.inflow.init(conf.MaxUploadBufferPerConnection + http2initialWindowSize)
-	}
-
-	// Send PRIORITY frames for placeholder streams during connection
-	// initialization. These establish a dependency tree that is part
-	// of the Akamai HTTP/2 fingerprint.
-	if t.fingerprint != nil {
-		for _, pf := range t.fingerprint.H2.InitPriorityFrames {
-			cc.fr.WritePriority(pf.StreamID, http2PriorityParam{
-				StreamDep: pf.StreamDep,
-				Exclusive: pf.Exclusive,
-				Weight:    pf.Weight,
-			})
-		}
-	}
-
+	cc.fr.WriteWindowUpdate(0, uint32(conf.MaxUploadBufferPerConnection))
+	cc.inflow.init(conf.MaxUploadBufferPerConnection + http2initialWindowSize)
 	cc.bw.Flush()
 	if cc.werr != nil {
 		cc.Close()
@@ -8937,7 +8896,7 @@ func (cs *http2clientStream) encodeAndWriteHeaders(req *Request) error {
 	// sent by writeRequestBody below, along with any Trailers,
 	// again in form HEADERS{1}, CONTINUATION{0,})
 	cc.hbuf.Reset()
-	res, err := http2encodeRequestHeaders(req, cs.requestedGzip, cc.peerMaxHeaderListSize, cc.t.fingerprint, func(name, value string) {
+	res, err := http2encodeRequestHeaders(req, cs.requestedGzip, cc.peerMaxHeaderListSize, func(name, value string) {
 		cc.writeHeader(name, value)
 	})
 	if err != nil {
@@ -8953,8 +8912,8 @@ func (cs *http2clientStream) encodeAndWriteHeaders(req *Request) error {
 	return err
 }
 
-func http2encodeRequestHeaders(req *Request, addGzipHeader bool, peerMaxHeaderListSize uint64, fp *Fingerprint, headerf func(name, value string)) (httpcommon.EncodeHeadersResult, error) {
-	param := httpcommon.EncodeHeadersParam{
+func http2encodeRequestHeaders(req *Request, addGzipHeader bool, peerMaxHeaderListSize uint64, headerf func(name, value string)) (httpcommon.EncodeHeadersResult, error) {
+	return httpcommon.EncodeHeaders(req.Context(), httpcommon.EncodeHeadersParam{
 		Request: httpcommon.Request{
 			Header:              req.Header,
 			Trailer:             req.Trailer,
@@ -8966,23 +8925,7 @@ func http2encodeRequestHeaders(req *Request, addGzipHeader bool, peerMaxHeaderLi
 		AddGzipHeader:         addGzipHeader,
 		PeerMaxHeaderListSize: peerMaxHeaderListSize,
 		DefaultUserAgent:      http2defaultUserAgent,
-	}
-
-	// Resolve pseudo-header order: per-request overrides fingerprint default.
-	if req.PseudoHeaderOrder != nil {
-		param.PseudoHeaderOrder = req.PseudoHeaderOrder
-	} else if fp != nil {
-		param.PseudoHeaderOrder = fp.PseudoHeaderOrder
-	}
-
-	// Resolve header order: per-request overrides fingerprint default.
-	if req.HeaderOrder != nil {
-		param.HeaderOrder = req.HeaderOrder
-	} else if fp != nil {
-		param.HeaderOrder = fp.HeaderOrder
-	}
-
-	return httpcommon.EncodeHeaders(req.Context(), param, headerf)
+	}, headerf)
 }
 
 // cleanupWriteRequest performs post-request tasks.
@@ -9123,19 +9066,6 @@ func (cc *http2ClientConn) awaitOpenSlotForStreamLocked(cs *http2clientStream) e
 
 // requires cc.wmu be held
 func (cc *http2ClientConn) writeHeaders(streamID uint32, endStream bool, maxFrameSize int, hdrs []byte) error {
-	// Resolve HEADERS frame priority from fingerprint.
-	var priority http2PriorityParam
-	if fp := cc.t.fingerprint; fp != nil {
-		hp := fp.H2.HeaderPriority
-		if hp.Weight > 0 || hp.StreamDep > 0 {
-			priority = http2PriorityParam{
-				StreamDep: hp.StreamDep,
-				Exclusive: hp.Exclusive,
-				Weight:    hp.Weight,
-			}
-		}
-	}
-
 	first := true // first frame written (HEADERS is first, then CONTINUATION)
 	for len(hdrs) > 0 && cc.werr == nil {
 		chunk := hdrs
@@ -9150,7 +9080,6 @@ func (cc *http2ClientConn) writeHeaders(streamID uint32, endStream bool, maxFram
 				BlockFragment: chunk,
 				EndStream:     endStream,
 				EndHeaders:    endHeaders,
-				Priority:      priority,
 			})
 			first = false
 		} else {

@@ -13,7 +13,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp/internal/godebug"
+	"internal/godebug"
 	"io"
 	"log"
 	"maps"

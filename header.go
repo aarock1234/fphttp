@@ -6,14 +6,13 @@ package http
 
 import (
 	"io"
+	"net/http/httptrace"
+	"net/http/internal/ascii"
 	"net/textproto"
 	"slices"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/ascii"
 
 	"golang.org/x/net/http/httpguts"
 )
@@ -222,88 +221,6 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 		}
 	}
 	headerSorterPool.Put(sorter)
-	return nil
-}
-
-// writeSubsetOrdered writes headers in the order specified by order.
-// Headers present in h but not listed in order are appended in sorted
-// order after the ordered headers. Keys in exclude are always skipped.
-func (h Header) writeSubsetOrdered(w io.Writer, exclude map[string]bool, order []string, trace *httptrace.ClientTrace) error {
-	ws, ok := w.(io.StringWriter)
-	if !ok {
-		ws = stringWriter{w}
-	}
-
-	written := make(map[string]bool, len(order))
-	var formattedVals []string
-
-	// First pass: write headers in the specified order.
-	for _, key := range order {
-		if exclude[key] || written[key] {
-			continue
-		}
-		vv, exists := h[key]
-		if !exists {
-			continue
-		}
-		written[key] = true
-
-		if !httpguts.ValidHeaderFieldName(key) {
-			continue
-		}
-
-		for _, v := range vv {
-			v = headerNewlineToSpace.Replace(v)
-			v = textproto.TrimString(v)
-			for _, s := range []string{key, ": ", v, "\r\n"} {
-				if _, err := ws.WriteString(s); err != nil {
-					return err
-				}
-			}
-			if trace != nil && trace.WroteHeaderField != nil {
-				formattedVals = append(formattedVals, v)
-			}
-		}
-
-		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField(key, formattedVals)
-			formattedVals = nil
-		}
-	}
-
-	// Second pass: write remaining headers in sorted order.
-	kvs, sorter := h.sortedKeyValues(exclude)
-	for _, kv := range kvs {
-		if written[kv.key] {
-			continue
-		}
-
-		if !httpguts.ValidHeaderFieldName(kv.key) {
-			continue
-		}
-
-		for _, v := range kv.values {
-			v = headerNewlineToSpace.Replace(v)
-			v = textproto.TrimString(v)
-			for _, s := range []string{kv.key, ": ", v, "\r\n"} {
-				if _, err := ws.WriteString(s); err != nil {
-					headerSorterPool.Put(sorter)
-					return err
-				}
-			}
-			if trace != nil && trace.WroteHeaderField != nil {
-				formattedVals = append(formattedVals, v)
-			}
-		}
-
-		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField(kv.key, formattedVals)
-			formattedVals = nil
-		}
-	}
-
-	headerSorterPool.Put(sorter)
-
 	return nil
 }
 

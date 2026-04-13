@@ -10,12 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http/internal/ascii"
 	"net/url"
 	"strconv"
 	"strings"
 	"syscall/js"
-
-	"github.com/aarock1234/fphttp/internal/ascii"
 )
 
 var uint8Array = js.Global().Get("Uint8Array")

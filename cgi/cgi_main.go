@@ -6,9 +6,9 @@ package cgi
 
 import (
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"maps"
+	"net/http"
 	"os"
 	"path"
 	"slices"

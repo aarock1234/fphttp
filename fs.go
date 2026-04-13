@@ -9,7 +9,7 @@ package http
 import (
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp/internal/godebug"
+	"internal/godebug"
 	"io"
 	"io/fs"
 	"mime"

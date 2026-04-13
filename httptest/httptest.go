@@ -10,8 +10,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"github.com/aarock1234/fphttp"
 	"io"
+	"net/http"
 	"strings"
 )
 

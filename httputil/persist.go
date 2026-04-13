@@ -7,9 +7,9 @@ package httputil
 import (
 	"bufio"
 	"errors"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"net"
+	"net/http"
 	"net/textproto"
 	"sync"
 )

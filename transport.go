@@ -18,11 +18,13 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp/internal/godebug"
+	"internal/godebug"
 	"io"
 	"log"
 	"maps"
 	"net"
+	"net/http/httptrace"
+	"net/http/internal/ascii"
 	"net/textproto"
 	"net/url"
 	"reflect"
@@ -31,9 +33,6 @@ import (
 	"sync/atomic"
 	"time"
 	_ "unsafe"
-
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/ascii"
 
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http/httpproxy"
@@ -311,17 +310,6 @@ type Transport struct {
 	// If ForceAttemptHTTP2 is true, or if TLSNextProto contains an "h2" entry,
 	// the default is HTTP/1 and HTTP/2.
 	Protocols *Protocols
-
-	// Fingerprint configures TLS and HTTP/2 fingerprinting behavior.
-	// When non-nil, the Transport uses uTLS for TLS handshakes and
-	// applies the specified HTTP/2 connection parameters (SETTINGS
-	// frame values, WINDOW_UPDATE, pseudo-header order, and header
-	// ordering).
-	//
-	// When nil, the Transport uses standard Go crypto/tls and
-	// default HTTP/2 parameters. This preserves full backward
-	// compatibility with the standard library.
-	Fingerprint *Fingerprint
 }
 
 func (t *Transport) writeBufferSize() int {
@@ -389,7 +377,6 @@ func (t *Transport) Clone() *Transport {
 		}
 		t2.TLSNextProto = npm
 	}
-	t2.Fingerprint = t.Fingerprint.Clone()
 	return t2
 }
 
@@ -487,15 +474,13 @@ func (t *Transport) protocols() Protocols {
 		if t.TLSNextProto["h2"] != nil {
 			p.SetHTTP2(true)
 		}
-	case !t.ForceAttemptHTTP2 && t.Fingerprint == nil && (t.TLSClientConfig != nil || t.Dial != nil || t.DialContext != nil || t.hasCustomTLSDialer()):
+	case !t.ForceAttemptHTTP2 && (t.TLSClientConfig != nil || t.Dial != nil || t.DialContext != nil || t.hasCustomTLSDialer()):
 		// Be conservative and don't automatically enable
 		// http2 if they've specified a custom TLS config or
 		// custom dialers. Let them opt-in themselves via
 		// Transport.Protocols.SetHTTP2(true) so we don't surprise them
 		// by modifying their tls.Config. Issue 14275.
 		// However, if ForceAttemptHTTP2 is true, it overrides the above checks.
-		// Fingerprint also overrides: browser fingerprints negotiate h2
-		// via ALPN, so the bundled HTTP/2 transport must be initialized.
 	case http2client.Value() == "0":
 	default:
 		p.SetHTTP2(true)
@@ -1727,13 +1712,6 @@ func (t *Transport) decConnsPerHost(key connectMethodKey) {
 // tunnel, this function establishes a nested TLS session inside the encrypted channel.
 // The remote endpoint's name may be overridden by TLSClientConfig.ServerName.
 func (pconn *persistConn) addTLS(ctx context.Context, name string, trace *httptrace.ClientTrace) error {
-	// When a fingerprint is configured and we are not restricted to
-	// HTTP/1.1 only, use uTLS for the handshake to produce a
-	// browser-like ClientHello.
-	if fp := pconn.t.Fingerprint; fp != nil && !pconn.cacheKey.onlyH1 {
-		return pconn.addTLSFingerprint(ctx, name, trace, fp)
-	}
-
 	// Initiate TLS and check remote host name against certificate.
 	cfg := cloneTLSConfig(pconn.t.TLSClientConfig)
 	if cfg.ServerName == "" {
@@ -1972,29 +1950,18 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod, isClientConn
 		t.Protocols.UnencryptedHTTP2() &&
 		!t.Protocols.HTTP1()
 
-	// When using uTLS for fingerprinting, pconn.conn is a *utlsConn, not
-	// a *tls.Conn. The TLSNextProto path (below) type-asserts *tls.Conn
-	// and would panic. Route fingerprinted H2 connections through
-	// newClientConner instead, which only requires net.Conn.
-	useNewClientConner := isClientConn || t.Fingerprint != nil
-	if useNewClientConner && (unencryptedHTTP2 || (pconn.tlsState != nil && pconn.tlsState.NegotiatedProtocol == "h2")) {
-		// Respect the transport's protocol configuration. When HTTP/2 is
-		// disabled (e.g. Protocols set to HTTP/1-only), fall through to
-		// HTTP/1.1 even if TLS negotiated h2 via the browser fingerprint's ALPN.
-		if p := t.protocols(); isClientConn || p.HTTP2() || p.UnencryptedHTTP2() {
-			altProto, _ := t.altProto.Load().(map[string]RoundTripper)
-			h2, ok := altProto["https"].(newClientConner)
-			if !ok {
-				return nil, errors.New("http: HTTP/2 implementation does not support NewClientConn (update golang.org/x/net?)")
-			}
-			alt, err := h2.NewClientConn(pconn.conn, internalStateHook)
-			if err != nil {
-				pconn.conn.Close()
-				return nil, err
-			}
-
-			return &persistConn{t: t, cacheKey: pconn.cacheKey, alt: alt, isClientConn: isClientConn}, nil
+	if isClientConn && (unencryptedHTTP2 || (pconn.tlsState != nil && pconn.tlsState.NegotiatedProtocol == "h2")) {
+		altProto, _ := t.altProto.Load().(map[string]RoundTripper)
+		h2, ok := altProto["https"].(newClientConner)
+		if !ok {
+			return nil, errors.New("http: HTTP/2 implementation does not support NewClientConn (update golang.org/x/net?)")
 		}
+		alt, err := h2.NewClientConn(pconn.conn, internalStateHook)
+		if err != nil {
+			pconn.conn.Close()
+			return nil, err
+		}
+		return &persistConn{t: t, cacheKey: pconn.cacheKey, alt: alt, isClientConn: true}, nil
 	}
 
 	if unencryptedHTTP2 {
@@ -2685,11 +2652,7 @@ func (pc *persistConn) writeLoop() {
 		select {
 		case wr := <-pc.writech:
 			startBytesWritten := pc.nwrite
-			var headerOrder []string
-			if fp := pc.t.Fingerprint; fp != nil {
-				headerOrder = fp.HeaderOrder
-			}
-			err := wr.req.Request.write(pc.bw, pc.isProxy, wr.req.extra, pc.waitForContinue(wr.continueCh), headerOrder)
+			err := wr.req.Request.write(pc.bw, pc.isProxy, wr.req.extra, pc.waitForContinue(wr.continueCh))
 			if bre, ok := err.(requestBodyReadError); ok {
 				err = bre.error
 				// Errors reading from the user's

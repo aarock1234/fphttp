@@ -7,15 +7,14 @@ package http
 import (
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp/internal/godebug"
+	"internal/godebug"
 	"log"
 	"net"
+	"net/http/internal/ascii"
 	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/aarock1234/fphttp/internal/ascii"
 )
 
 var httpcookiemaxnum = godebug.New("httpcookiemaxnum")
@@ -517,8 +516,7 @@ func sanitizeCookieValue(v string, quoted bool) string {
 }
 
 func validCookieValueByte(b byte) bool {
-	// github.com/aarock1234/fphttp allows double quotes in cookie value
-	return 0x20 <= b && b < 0x7f && /* b != '"' && */ b != ';' && b != '\\'
+	return 0x20 <= b && b < 0x7f && b != '"' && b != ';' && b != '\\'
 }
 
 // path-av           = "Path=" path-value

@@ -9,7 +9,7 @@ package httptrace
 import (
 	"context"
 	"crypto/tls"
-	"github.com/aarock1234/fphttp/internal/nettrace"
+	"internal/nettrace"
 	"net"
 	"net/textproto"
 	"reflect"

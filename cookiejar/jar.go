@@ -9,16 +9,15 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"net"
+	"net/http"
+	"net/http/internal/ascii"
 	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/aarock1234/fphttp/internal/ascii"
 )
 
 // PublicSuffixList provides the public suffix of a domain. For example:

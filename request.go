@@ -18,6 +18,8 @@ import (
 	"maps"
 	"mime"
 	"mime/multipart"
+	"net/http/httptrace"
+	"net/http/internal/ascii"
 	"net/textproto"
 	"net/url"
 	urlpkg "net/url"
@@ -25,9 +27,6 @@ import (
 	"strings"
 	"sync"
 	_ "unsafe" // for linkname
-
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/ascii"
 
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/idna"
@@ -283,29 +282,6 @@ type Request struct {
 	// Few HTTP clients, servers, or proxies support HTTP trailers.
 	Trailer Header
 
-	// HeaderOrder specifies the order in which HTTP/1.1 headers are
-	// written on the wire. Keys should be in canonical form (e.g.
-	// "Content-Type", not "content-type"). Headers present in the
-	// request but absent from this list are appended in sorted order.
-	//
-	// For HTTP/2, this controls the iteration order of regular
-	// (non-pseudo) headers; names are lowercased automatically.
-	//
-	// If nil, the Transport's Fingerprint.HeaderOrder is used as a
-	// fallback. If both are nil, headers are written in sorted order.
-	//
-	// This field is ignored by the HTTP server.
-	HeaderOrder []string
-
-	// PseudoHeaderOrder specifies the order of HTTP/2 pseudo-headers
-	// (:method, :authority, :scheme, :path). All four must be present
-	// for a non-CONNECT request. If nil, the Transport's
-	// Fingerprint.PseudoHeaderOrder is used as a fallback. If both
-	// are nil, the standard Go order is used.
-	//
-	// This field is ignored for HTTP/1.1 requests and by the HTTP server.
-	PseudoHeaderOrder []string
-
 	// RemoteAddr allows HTTP servers and other software to record
 	// the network address that sent the request, usually for
 	// logging. This field is not filled in by ReadRequest and
@@ -421,16 +397,6 @@ func (r *Request) Clone(ctx context.Context) *Request {
 		s2 := make([]string, len(s))
 		copy(s2, s)
 		r2.TransferEncoding = s2
-	}
-	if s := r.HeaderOrder; s != nil {
-		s2 := make([]string, len(s))
-		copy(s2, s)
-		r2.HeaderOrder = s2
-	}
-	if s := r.PseudoHeaderOrder; s != nil {
-		s2 := make([]string, len(s))
-		copy(s2, s)
-		r2.PseudoHeaderOrder = s2
 	}
 	r2.Form = cloneURLValues(r.Form)
 	r2.PostForm = cloneURLValues(r.PostForm)
@@ -593,7 +559,7 @@ const defaultUserAgent = "Go-http-client/1.1"
 // hasn't been set to "identity", Write adds "Transfer-Encoding:
 // chunked" to the header. Body is closed after it is sent.
 func (r *Request) Write(w io.Writer) error {
-	return r.write(w, false, nil, nil, nil)
+	return r.write(w, false, nil, nil)
 }
 
 // WriteProxy is like [Request.Write] but writes the request in the form
@@ -603,7 +569,7 @@ func (r *Request) Write(w io.Writer) error {
 // In either case, WriteProxy also writes a Host header, using
 // either r.Host or r.URL.Host.
 func (r *Request) WriteProxy(w io.Writer) error {
-	return r.write(w, true, nil, nil, nil)
+	return r.write(w, true, nil, nil)
 }
 
 // errMissingHost is returned by Write when there is no Host or URL present in
@@ -612,9 +578,8 @@ var errMissingHost = errors.New("http: Request.Write on Request with no Host or 
 
 // extraHeaders may be nil
 // waitForContinue may be nil
-// headerOrder may be nil; if non-nil it is used as a fallback when r.HeaderOrder is nil
 // always closes body
-func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitForContinue func() bool, headerOrder []string) (err error) {
+func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitForContinue func() bool) (err error) {
 	trace := httptrace.ContextClientTrace(r.Context())
 	if trace != nil && trace.WroteRequest != nil {
 		defer func() {
@@ -747,16 +712,7 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		return err
 	}
 
-	order := r.HeaderOrder
-	if order == nil {
-		order = headerOrder
-	}
-
-	if order != nil {
-		err = r.Header.writeSubsetOrdered(w, reqWriteExcludeHeader, order, trace)
-	} else {
-		err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)
-	}
+	err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)
 	if err != nil {
 		return err
 	}

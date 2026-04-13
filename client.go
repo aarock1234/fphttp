@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http/internal/ascii"
 	"net/url"
 	"reflect"
 	"slices"
@@ -24,8 +25,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/aarock1234/fphttp/internal/ascii"
 )
 
 // A Client is an HTTP client. Its zero value ([DefaultClient]) is a

@@ -10,20 +10,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"log"
 	"mime"
 	"net"
+	"net/http"
+	"net/http/httptrace"
+	"net/http/internal/ascii"
 	"net/textproto"
 	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/ascii"
 
 	"golang.org/x/net/http/httpguts"
 )
