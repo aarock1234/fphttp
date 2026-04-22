@@ -1,9 +1,9 @@
 package http
 
 import (
+	"errors"
 	"fmt"
 	"slices"
-	"sort"
 
 	utls "github.com/refraction-networking/utls"
 )
@@ -53,17 +53,19 @@ type H2Setting struct {
 }
 
 // H2Priority is the priority signal sent with HTTP/2 HEADERS frames.
-// A zero value means no priority is included.
+// Priority is only emitted when Enabled is true; the zero value emits
+// no priority, matching stdlib behavior.
 type H2Priority struct {
+	Enabled   bool
 	StreamDep uint32
 	Exclusive bool
 	Weight    uint8
 }
 
 // H2PriorityFrame is a standalone PRIORITY frame sent during HTTP/2
-// connection initialization. Browsers like Chrome send these for
-// placeholder streams (e.g. 3, 5, 7, 9, 11) to establish a
-// dependency tree. This is part of the Akamai HTTP/2 fingerprint.
+// connection initialization. Browsers like Firefox send these for
+// placeholder streams to establish a dependency tree. This is part
+// of the Akamai HTTP/2 fingerprint.
 type H2PriorityFrame struct {
 	StreamID  uint32
 	StreamDep uint32
@@ -85,24 +87,41 @@ type H2Fingerprint struct {
 
 	// InitPriorityFrames are standalone PRIORITY frames sent during
 	// connection initialization, after the SETTINGS and WINDOW_UPDATE
-	// frames. Browsers like Chrome use these to establish a dependency
+	// frames. Browsers like Firefox use these to establish a dependency
 	// tree for placeholder streams. The frames are written in order.
 	// If nil, no PRIORITY frames are sent during initialization.
 	InitPriorityFrames []H2PriorityFrame
 
 	// HeaderPriority is the PRIORITY information included in
-	// HEADERS frames. A zero value means no priority is set.
+	// HEADERS frames. The zero value emits no priority; set
+	// HeaderPriority.Enabled to true to include it.
 	HeaderPriority H2Priority
 }
 
 // Fingerprint configures TLS and HTTP/2 fingerprinting on a Transport.
 // A nil Fingerprint on a Transport means standard Go behavior with no
 // fingerprint modifications.
+//
+// Fingerprint must not be modified after assignment to a Transport.
+// Use Clone to obtain a safely mutable copy.
 type Fingerprint struct {
 	// ClientHelloID selects the uTLS ClientHello fingerprint for
 	// TLS connections. When set, the Transport uses uTLS instead
 	// of crypto/tls for the TLS handshake.
+	//
+	// When ClientHelloSpec is also set, ClientHelloSpec takes
+	// precedence and ClientHelloID is ignored except that it is
+	// still passed to uTLS as a label.
 	ClientHelloID utls.ClientHelloID
+
+	// ClientHelloSpec, when non-nil, provides a fully customized
+	// ClientHello message that overrides ClientHelloID. Use this
+	// to mimic browser versions uTLS does not ship with a preset
+	// for, or to match JA3/JA4 strings exactly.
+	//
+	// When ClientHelloSpec is set, ClientHelloID should be set to
+	// utls.HelloCustom so uTLS marks the handshake as custom.
+	ClientHelloSpec *utls.ClientHelloSpec
 
 	// HeaderOrder specifies the order in which HTTP/1.1 headers
 	// are written on the wire. Keys should be in canonical form
@@ -127,71 +146,37 @@ type Fingerprint struct {
 	H2 H2Fingerprint
 }
 
-// Clone returns a deep copy of f. Returns nil if f is nil.
+// Clone returns a deep copy of f or nil if f is nil. The embedded
+// ClientHelloSpec pointer is shared, not deep-copied; callers must
+// not mutate a spec in place after cloning.
 func (f *Fingerprint) Clone() *Fingerprint {
 	if f == nil {
 		return nil
 	}
 
-	f2 := &Fingerprint{
-		ClientHelloID: f.ClientHelloID,
-		H2: H2Fingerprint{
-			ConnectionFlow: f.H2.ConnectionFlow,
-			HeaderPriority: f.H2.HeaderPriority,
-		},
-	}
+	f2 := *f
+	f2.HeaderOrder = slices.Clone(f.HeaderOrder)
+	f2.PseudoHeaderOrder = slices.Clone(f.PseudoHeaderOrder)
+	f2.H2.Settings = slices.Clone(f.H2.Settings)
+	f2.H2.InitPriorityFrames = slices.Clone(f.H2.InitPriorityFrames)
 
-	if f.HeaderOrder != nil {
-		f2.HeaderOrder = make([]string, len(f.HeaderOrder))
-		copy(f2.HeaderOrder, f.HeaderOrder)
-	}
-
-	if f.PseudoHeaderOrder != nil {
-		f2.PseudoHeaderOrder = make([]string, len(f.PseudoHeaderOrder))
-		copy(f2.PseudoHeaderOrder, f.PseudoHeaderOrder)
-	}
-
-	if f.H2.Settings != nil {
-		f2.H2.Settings = make([]H2Setting, len(f.H2.Settings))
-		copy(f2.H2.Settings, f.H2.Settings)
-	}
-
-	if f.H2.InitPriorityFrames != nil {
-		f2.H2.InitPriorityFrames = make([]H2PriorityFrame, len(f.H2.InitPriorityFrames))
-		copy(f2.H2.InitPriorityFrames, f.H2.InitPriorityFrames)
-	}
-
-	return f2
+	return &f2
 }
 
-// requiredPseudoHeaders are the four pseudo-headers that must be present
-// in every non-CONNECT HTTP/2 request.
-var requiredPseudoHeaders = []string{":method", ":authority", ":scheme", ":path"}
-
-// Validate checks f for common misconfigurations and returns an error
-// describing the first problem found. A nil Fingerprint is always valid.
+// Validate checks f for common misconfigurations. It returns all
+// problems found joined via errors.Join, or nil if f is valid.
+// A nil Fingerprint is always valid.
 func (f *Fingerprint) Validate() error {
 	if f == nil {
 		return nil
 	}
 
-	if err := f.validatePseudoHeaderOrder(); err != nil {
-		return err
-	}
-
-	if err := f.validateSettings(); err != nil {
-		return err
-	}
-
-	if err := f.validateInitPriorityFrames(); err != nil {
-		return err
-	}
-
-	if err := f.validateHeaderOrder(); err != nil {
-		return err
-	}
-
-	return nil
+	return errors.Join(
+		f.validatePseudoHeaderOrder(),
+		f.validateSettings(),
+		f.validateInitPriorityFrames(),
+		f.validateHeaderOrder(),
+	)
 }
 
 // validatePseudoHeaderOrder checks that PseudoHeaderOrder, if set,
@@ -201,21 +186,27 @@ func (f *Fingerprint) validatePseudoHeaderOrder() error {
 		return nil
 	}
 
-	if len(f.PseudoHeaderOrder) != len(requiredPseudoHeaders) {
-		return fmt.Errorf("fphttp: PseudoHeaderOrder has %d entries, want %d",
-			len(f.PseudoHeaderOrder), len(requiredPseudoHeaders))
+	required := map[string]bool{
+		":method":    true,
+		":authority": true,
+		":scheme":    true,
+		":path":      true,
+	}
+	seen := make(map[string]bool, len(required))
+	for _, p := range f.PseudoHeaderOrder {
+		if !required[p] {
+			return fmt.Errorf("fphttp: PseudoHeaderOrder contains invalid pseudo-header %q", p)
+		}
+		if seen[p] {
+			return fmt.Errorf("fphttp: PseudoHeaderOrder contains duplicate %q", p)
+		}
+		seen[p] = true
 	}
 
-	sorted := make([]string, len(f.PseudoHeaderOrder))
-	copy(sorted, f.PseudoHeaderOrder)
-	sort.Strings(sorted)
-
-	required := make([]string, len(requiredPseudoHeaders))
-	copy(required, requiredPseudoHeaders)
-	sort.Strings(required)
-
-	if !slices.Equal(sorted, required) {
-		return fmt.Errorf("fphttp: PseudoHeaderOrder must contain exactly %v", requiredPseudoHeaders)
+	for p := range required {
+		if !seen[p] {
+			return fmt.Errorf("fphttp: PseudoHeaderOrder missing required pseudo-header %q", p)
+		}
 	}
 
 	return nil
@@ -261,4 +252,15 @@ func (f *Fingerprint) validateHeaderOrder() error {
 	}
 
 	return nil
+}
+
+// resolveOrder returns perReq if non-nil, else fallback. It is the
+// per-request-overrides-fingerprint-default pattern used by the H1
+// and H2 write paths.
+func resolveOrder(perReq, fallback []string) []string {
+	if perReq != nil {
+		return perReq
+	}
+
+	return fallback
 }

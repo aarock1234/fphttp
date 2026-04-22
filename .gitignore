@@ -34,3 +34,6 @@ go.work.sum
 # LLM
 .llm/
 .opencode/
+
+# macOS
+.DS_Store

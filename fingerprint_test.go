@@ -24,6 +24,7 @@ func TestFingerprint_Clone(t *testing.T) {
 			H2: H2Fingerprint{
 				ConnectionFlow: 15663105,
 				HeaderPriority: H2Priority{
+					Enabled:   true,
 					StreamDep: 13,
 					Exclusive: true,
 					Weight:    41,
@@ -44,12 +45,26 @@ func TestFingerprint_Clone(t *testing.T) {
 		}
 	})
 
+	t.Run("ClientHelloSpec pointer is shared not deep-copied", func(t *testing.T) {
+		spec := &utls.ClientHelloSpec{
+			TLSVersMin: utls.VersionTLS12,
+			TLSVersMax: utls.VersionTLS13,
+		}
+		f := &Fingerprint{
+			ClientHelloSpec: spec,
+		}
+
+		clone := f.Clone()
+		if clone.ClientHelloSpec != f.ClientHelloSpec {
+			t.Errorf("ClientHelloSpec pointer = %p, want shared %p", clone.ClientHelloSpec, f.ClientHelloSpec)
+		}
+	})
+
 	t.Run("mutating HeaderOrder does not affect original", func(t *testing.T) {
 		f := &Fingerprint{
 			HeaderOrder: []string{"Host", "Accept", "User-Agent"},
 		}
-		original := make([]string, len(f.HeaderOrder))
-		copy(original, f.HeaderOrder)
+		original := slices.Clone(f.HeaderOrder)
 
 		clone := f.Clone()
 		clone.HeaderOrder[0] = "X-Mutated"
@@ -63,8 +78,7 @@ func TestFingerprint_Clone(t *testing.T) {
 		f := &Fingerprint{
 			PseudoHeaderOrder: []string{":method", ":path", ":authority", ":scheme"},
 		}
-		original := make([]string, len(f.PseudoHeaderOrder))
-		copy(original, f.PseudoHeaderOrder)
+		original := slices.Clone(f.PseudoHeaderOrder)
 
 		clone := f.Clone()
 		clone.PseudoHeaderOrder[0] = ":mutated"
@@ -141,6 +155,11 @@ func TestFingerprint_Validate(t *testing.T) {
 			wantErr: "",
 		},
 		{
+			name:    "SafariIOS is valid",
+			fp:      SafariIOS(),
+			wantErr: "",
+		},
+		{
 			name:    "Edge is valid",
 			fp:      Edge(),
 			wantErr: "",
@@ -151,25 +170,30 @@ func TestFingerprint_Validate(t *testing.T) {
 			wantErr: "",
 		},
 		{
+			name:    "ChromeAndroid is valid",
+			fp:      ChromeAndroid(),
+			wantErr: "",
+		},
+		{
 			name: "PseudoHeaderOrder wrong count",
 			fp: &Fingerprint{
 				PseudoHeaderOrder: []string{":method", ":path"},
 			},
-			wantErr: "has 2 entries, want 4",
+			wantErr: "missing required pseudo-header",
 		},
 		{
-			name: "PseudoHeaderOrder missing required header",
+			name: "PseudoHeaderOrder unknown entry",
 			fp: &Fingerprint{
 				PseudoHeaderOrder: []string{":method", ":path", ":authority", ":bogus"},
 			},
-			wantErr: "must contain exactly",
+			wantErr: `contains invalid pseudo-header ":bogus"`,
 		},
 		{
 			name: "PseudoHeaderOrder with duplicate entries",
 			fp: &Fingerprint{
 				PseudoHeaderOrder: []string{":method", ":method", ":path", ":authority"},
 			},
-			wantErr: "must contain exactly",
+			wantErr: `contains duplicate ":method"`,
 		},
 		{
 			name: "duplicate H2 setting IDs",
@@ -230,7 +254,8 @@ func TestFingerprint_Validate(t *testing.T) {
 						{StreamID: 5, StreamDep: 0, Weight: 100},
 					},
 					HeaderPriority: H2Priority{
-						Weight: 255,
+						Enabled: true,
+						Weight:  255,
 					},
 				},
 			},
@@ -257,6 +282,41 @@ func TestFingerprint_Validate(t *testing.T) {
 				t.Errorf("Validate() error = %q, want substring %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestFingerprint_Validate_ReportsAllErrors(t *testing.T) {
+	fp := &Fingerprint{
+		PseudoHeaderOrder: []string{":method", ":path"},
+		HeaderOrder:       []string{"content-type"},
+		H2: H2Fingerprint{
+			Settings: []H2Setting{
+				{ID: H2SettingHeaderTableSize, Val: 65536},
+				{ID: H2SettingHeaderTableSize, Val: 4096},
+			},
+			InitPriorityFrames: []H2PriorityFrame{
+				{StreamID: 0, Weight: 100},
+			},
+		},
+	}
+
+	err := fp.Validate()
+	if err == nil {
+		t.Fatal("Validate() = nil, want aggregated error")
+	}
+
+	want := []string{
+		"missing required pseudo-header",
+		"duplicate H2 setting ID",
+		"InitPriorityFrames[0] has StreamID 0",
+		`HeaderOrder key "content-type" is not canonical`,
+	}
+
+	msg := err.Error()
+	for _, w := range want {
+		if !strings.Contains(msg, w) {
+			t.Errorf("Validate() error missing substring %q\nfull error: %s", w, msg)
+		}
 	}
 }
 
@@ -289,4 +349,52 @@ func TestH2SettingID_String(t *testing.T) {
 			t.Errorf("H2SettingID(%d).String() = %q, want %q", id, got, want)
 		}
 	})
+}
+
+func TestProfile(t *testing.T) {
+	tests := []struct {
+		browser  Browser
+		platform Platform
+		wantHID  utls.ClientHelloID
+		wantNil  bool
+	}{
+		{BrowserChrome, PlatformWindows, utls.HelloChrome_Auto, false},
+		{BrowserChrome, PlatformMac, utls.HelloChrome_Auto, false},
+		{BrowserChrome, PlatformLinux, utls.HelloChrome_Auto, false},
+		{BrowserChrome, PlatformAndroid, utls.HelloChrome_Auto, false},
+		{BrowserChrome, PlatformIOS, utls.HelloIOS_Auto, false},
+		{BrowserChrome, PlatformIPadOS, utls.HelloIOS_Auto, false},
+		{BrowserFirefox, PlatformWindows, utls.HelloFirefox_Auto, false},
+		{BrowserFirefox, PlatformIOS, utls.HelloIOS_Auto, false},
+		{BrowserSafari, PlatformMac, utls.HelloSafari_Auto, false},
+		{BrowserSafari, PlatformIOS, utls.HelloIOS_Auto, false},
+		{BrowserEdge, PlatformWindows, utls.HelloEdge_Auto, false},
+		{BrowserBrave, PlatformWindows, utls.HelloChrome_Auto, false},
+		{Browser("unknown"), PlatformWindows, utls.ClientHelloID{}, true},
+	}
+
+	for _, tt := range tests {
+		name := fmt.Sprintf("%s_%s", tt.browser, tt.platform)
+		t.Run(name, func(t *testing.T) {
+			got := Profile(tt.browser, tt.platform)
+
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("Profile(%v, %v) = %v, want nil", tt.browser, tt.platform, got)
+				}
+
+				return
+			}
+
+			if got == nil {
+				t.Fatalf("Profile(%v, %v) = nil, want non-nil", tt.browser, tt.platform)
+			}
+			if got.ClientHelloID != tt.wantHID {
+				t.Errorf("ClientHelloID = %v, want %v", got.ClientHelloID, tt.wantHID)
+			}
+			if err := got.Validate(); err != nil {
+				t.Errorf("Validate() = %v, want nil", err)
+			}
+		})
+	}
 }

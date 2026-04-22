@@ -18,7 +18,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp/internal/godebug"
 	"io"
 	"log"
 	"maps"
@@ -30,13 +29,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	_ "unsafe"
-
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/ascii"
 
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http/httpproxy"
+
+	"github.com/aarock1234/fphttp/httptrace"
+	"github.com/aarock1234/fphttp/internal/ascii"
+	"github.com/aarock1234/fphttp/internal/godebug"
+
+	_ "unsafe"
 )
 
 // DefaultTransport is the default implementation of [Transport] and is

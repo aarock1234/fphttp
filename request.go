@@ -24,13 +24,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	_ "unsafe" // for linkname
+
+	"golang.org/x/net/http/httpguts"
+	"golang.org/x/net/idna"
 
 	"github.com/aarock1234/fphttp/httptrace"
 	"github.com/aarock1234/fphttp/internal/ascii"
 
-	"golang.org/x/net/http/httpguts"
-	"golang.org/x/net/idna"
+	_ "unsafe" // for linkname
 )
 
 const (
@@ -747,12 +748,7 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		return err
 	}
 
-	order := r.HeaderOrder
-	if order == nil {
-		order = headerOrder
-	}
-
-	if order != nil {
+	if order := resolveOrder(r.HeaderOrder, headerOrder); order != nil {
 		err = r.Header.writeSubsetOrdered(w, reqWriteExcludeHeader, order, trace)
 	} else {
 		err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)

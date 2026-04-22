@@ -9,7 +9,6 @@ package http
 import (
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp/internal/godebug"
 	"io"
 	"io/fs"
 	"mime"
@@ -23,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aarock1234/fphttp/internal/godebug"
 )
 
 // A Dir implements [FileSystem] using the native file system restricted to a

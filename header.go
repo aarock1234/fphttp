@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/http/httpguts"
+
 	"github.com/aarock1234/fphttp/httptrace"
 	"github.com/aarock1234/fphttp/internal/ascii"
-
-	"golang.org/x/net/http/httpguts"
 )
 
 // A Header represents the key-value pairs in an HTTP header.

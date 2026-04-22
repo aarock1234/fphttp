@@ -7,7 +7,6 @@ package http
 import (
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp/internal/godebug"
 	"log"
 	"net"
 	"net/textproto"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aarock1234/fphttp/internal/ascii"
+	"github.com/aarock1234/fphttp/internal/godebug"
 )
 
 var httpcookiemaxnum = godebug.New("httpcookiemaxnum")

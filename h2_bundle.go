@@ -46,12 +46,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/httpcommon"
-
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2/hpack"
 	"golang.org/x/net/idna"
+
+	"github.com/aarock1234/fphttp/httptrace"
+	"github.com/aarock1234/fphttp/internal/httpcommon"
 )
 
 // The HTTP protocols are defined in terms of ASCII, not Unicode. This file
@@ -8968,19 +8968,14 @@ func http2encodeRequestHeaders(req *Request, addGzipHeader bool, peerMaxHeaderLi
 		DefaultUserAgent:      http2defaultUserAgent,
 	}
 
-	// Resolve pseudo-header order: per-request overrides fingerprint default.
-	if req.PseudoHeaderOrder != nil {
-		param.PseudoHeaderOrder = req.PseudoHeaderOrder
-	} else if fp != nil {
-		param.PseudoHeaderOrder = fp.PseudoHeaderOrder
+	// Resolve header orders: per-request overrides fingerprint default.
+	var fpPseudoOrder, fpHeaderOrder []string
+	if fp != nil {
+		fpPseudoOrder = fp.PseudoHeaderOrder
+		fpHeaderOrder = fp.HeaderOrder
 	}
-
-	// Resolve header order: per-request overrides fingerprint default.
-	if req.HeaderOrder != nil {
-		param.HeaderOrder = req.HeaderOrder
-	} else if fp != nil {
-		param.HeaderOrder = fp.HeaderOrder
-	}
+	param.PseudoHeaderOrder = resolveOrder(req.PseudoHeaderOrder, fpPseudoOrder)
+	param.HeaderOrder = resolveOrder(req.HeaderOrder, fpHeaderOrder)
 
 	return httpcommon.EncodeHeaders(req.Context(), param, headerf)
 }
@@ -9123,16 +9118,15 @@ func (cc *http2ClientConn) awaitOpenSlotForStreamLocked(cs *http2clientStream) e
 
 // requires cc.wmu be held
 func (cc *http2ClientConn) writeHeaders(streamID uint32, endStream bool, maxFrameSize int, hdrs []byte) error {
-	// Resolve HEADERS frame priority from fingerprint.
+	// Resolve HEADERS frame priority from fingerprint. The zero-value
+	// H2Priority emits no priority; callers opt in via Enabled.
 	var priority http2PriorityParam
-	if fp := cc.t.fingerprint; fp != nil {
+	if fp := cc.t.fingerprint; fp != nil && fp.H2.HeaderPriority.Enabled {
 		hp := fp.H2.HeaderPriority
-		if hp.Weight > 0 || hp.StreamDep > 0 {
-			priority = http2PriorityParam{
-				StreamDep: hp.StreamDep,
-				Exclusive: hp.Exclusive,
-				Weight:    hp.Weight,
-			}
+		priority = http2PriorityParam{
+			StreamDep: hp.StreamDep,
+			Exclusive: hp.Exclusive,
+			Weight:    hp.Weight,
 		}
 	}
 
