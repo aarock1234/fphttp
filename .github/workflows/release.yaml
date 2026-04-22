@@ -1,13 +1,17 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       bump:
-        description: "Version bump type"
+        description: "Version bump (use 'none' to release the current latest tag without bumping)"
         required: true
         type: choice
         options:
+          - none
           - patch
           - minor
           - major
@@ -26,12 +30,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Compute next tag
+      - name: Determine tag
         id: tag
         run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # triggered by a tag push; release that tag as-is.
+            version="${GITHUB_REF#refs/tags/}"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "needs_tag=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           latest=$(git tag --list 'v*.*.*' --sort=-v:refname | head -1)
           if [ -z "$latest" ]; then
             latest="v0.0.0"
+          fi
+
+          if [ "${{ inputs.bump }}" = "none" ]; then
+            if [ "$latest" = "v0.0.0" ]; then
+              echo "no existing tag to release; choose patch/minor/major" >&2
+              exit 1
+            fi
+            echo "version=$latest" >> "$GITHUB_OUTPUT"
+            echo "needs_tag=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           major=$(echo "$latest" | cut -d. -f1 | tr -d v)
@@ -45,6 +67,7 @@ jobs:
           esac
 
           echo "version=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "needs_tag=true" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -58,6 +81,7 @@ jobs:
         run: go vet ./...
 
       - name: Tag and push
+        if: steps.tag.outputs.needs_tag == 'true'
         run: |
           git tag "${{ steps.tag.outputs.version }}"
           git push origin "${{ steps.tag.outputs.version }}"
