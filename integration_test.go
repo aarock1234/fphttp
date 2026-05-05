@@ -4,6 +4,7 @@ package http_test
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -193,5 +194,66 @@ func TestIntegration_NilFingerprint(t *testing.T) {
 	// Verify the response body was valid JSON with actual content.
 	if !strings.Contains(string(body), "ja3_hash") {
 		t.Errorf("response body does not contain expected fingerprint data")
+	}
+}
+
+// TestIntegration_HPACKDynamicTableGrowth exercises the HPACK decoder against
+// a server (Cloudflare's edge fronting cloudflare.com) that emits dynamic
+// table size updates above the 4096-byte default. Before the decoder size
+// was sourced from Fingerprint.H2.Settings, the Chrome profile would announce
+// SETTINGS_HEADER_TABLE_SIZE=65536 while the local decoder remained capped
+// at 4096, so the first oversized update would terminate the connection
+// with COMPRESSION_ERROR. This test fails the same way without that fix.
+func TestIntegration_HPACKDynamicTableGrowth(t *testing.T) {
+	tests := []struct {
+		name string
+		fp   *http.Fingerprint
+	}{
+		{"chrome", http.Chrome()},
+		{"firefox", http.Firefox()},
+		{"safari", http.Safari()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &http.Client{
+				Transport: &http.Transport{
+					Fingerprint: tt.fp,
+				},
+			}
+
+			req, err := http.NewRequest("GET", "https://www.cloudflare.com/", nil)
+			if err != nil {
+				t.Fatalf("NewRequest() error: %v", err)
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+			req.Header.Set("Accept", "*/*")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				if strings.Contains(err.Error(), "COMPRESSION_ERROR") {
+					t.Fatalf("HPACK decoder rejected dynamic table size update: %v", err)
+				}
+				t.Fatalf("Do() error: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			n, err := io.Copy(io.Discard, resp.Body)
+			if err != nil {
+				if strings.Contains(err.Error(), "COMPRESSION_ERROR") {
+					t.Fatalf("HPACK decoder rejected mid-stream: %v", err)
+				}
+				if !errors.Is(err, io.EOF) {
+					t.Fatalf("reading body: %v", err)
+				}
+			}
+
+			if n == 0 {
+				t.Errorf("expected non-empty response body, got 0 bytes")
+			}
+			if resp.StatusCode != 200 {
+				t.Errorf("status = %d, want 200", resp.StatusCode)
+			}
+		})
 	}
 }

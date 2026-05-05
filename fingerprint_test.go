@@ -398,3 +398,43 @@ func TestProfile(t *testing.T) {
 		})
 	}
 }
+
+func TestH2Fingerprint_SettingValue(t *testing.T) {
+	h := H2Fingerprint{
+		Settings: []H2Setting{
+			{ID: H2SettingHeaderTableSize, Val: 65536},
+			{ID: H2SettingEnablePush, Val: 0},
+			{ID: H2SettingMaxHeaderListSize, Val: 262144},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		id      H2SettingID
+		wantVal uint32
+		wantOK  bool
+	}{
+		{"present_first", H2SettingHeaderTableSize, 65536, true},
+		{"present_middle", H2SettingEnablePush, 0, true},
+		{"present_last", H2SettingMaxHeaderListSize, 262144, true},
+		{"absent", H2SettingMaxFrameSize, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := h.settingValue(tt.id)
+			if got != tt.wantVal || ok != tt.wantOK {
+				t.Errorf("settingValue(%v) = (%d, %v), want (%d, %v)", tt.id, got, ok, tt.wantVal, tt.wantOK)
+			}
+		})
+	}
+
+	t.Run("empty_settings", func(t *testing.T) {
+		var h H2Fingerprint
+
+		got, ok := h.settingValue(H2SettingHeaderTableSize)
+		if got != 0 || ok {
+			t.Errorf("settingValue() on zero value = (%d, %v), want (0, false)", got, ok)
+		}
+	})
+}

@@ -264,3 +264,16 @@ func resolveOrder(perReq, fallback []string) []string {
 
 	return fallback
 }
+
+// settingValue returns the value of the first setting matching id, and
+// whether such a setting exists. Validate rejects duplicate IDs, so the
+// "first match" semantics are unambiguous in practice.
+func (h H2Fingerprint) settingValue(id H2SettingID) (uint32, bool) {
+	for _, s := range h.Settings {
+		if s.ID == id {
+			return s.Val, true
+		}
+	}
+
+	return 0, false
+}

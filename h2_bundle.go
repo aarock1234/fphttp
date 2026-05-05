@@ -1473,6 +1473,22 @@ var (
 // flow control window update.
 const http2inflowMinRefresh = 4 << 10
 
+// http2safeAddInt32 adds two int32 values, clamping the result to math.MaxInt32.
+// HTTP/2 caps flow control windows at 2^31-1 (RFC 7540 Section 6.9.1), so
+// clamping is the correct behavior when a user-supplied increment plus the
+// initial window would exceed that bound.
+func http2safeAddInt32(a, b int32) int32 {
+	sum := int64(a) + int64(b)
+	if sum > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if sum < math.MinInt32 {
+		return math.MinInt32
+	}
+
+	return int32(sum)
+}
+
 // inflow accounts for an inbound flow control window.
 // It tracks both the latest window sent to the peer (used for enforcement)
 // and the accumulated unsent window.
@@ -8133,9 +8149,25 @@ func (t *http2Transport) newClientConn(c net.Conn, singleUse bool, internalState
 	if t.CountError != nil {
 		cc.fr.countError = t.CountError
 	}
+	// Resolve HPACK decoder and framer limits. When a fingerprint
+	// announces SETTINGS_HEADER_TABLE_SIZE or SETTINGS_MAX_HEADER_LIST_SIZE,
+	// our local decoder/framer must agree with what we tell the peer.
+	// Otherwise the peer is free to (and Cloudflare will) emit HPACK
+	// dynamic-table-size updates above 4096, which our decoder would
+	// reject as a COMPRESSION_ERROR.
 	maxHeaderTableSize := conf.MaxDecoderHeaderTableSize
+	maxHeaderListSize := t.maxHeaderListSize()
+	if t.fingerprint != nil {
+		if v, ok := t.fingerprint.H2.settingValue(H2SettingHeaderTableSize); ok {
+			maxHeaderTableSize = v
+		}
+		if v, ok := t.fingerprint.H2.settingValue(H2SettingMaxHeaderListSize); ok {
+			maxHeaderListSize = v
+		}
+	}
+
 	cc.fr.ReadMetaHeaders = hpack.NewDecoder(maxHeaderTableSize, nil)
-	cc.fr.MaxHeaderListSize = t.maxHeaderListSize()
+	cc.fr.MaxHeaderListSize = maxHeaderListSize
 
 	cc.henc = hpack.NewEncoder(&cc.hbuf)
 	cc.henc.SetMaxDynamicTableSizeLimit(conf.MaxEncoderHeaderTableSize)
@@ -8160,10 +8192,10 @@ func (t *http2Transport) newClientConn(c net.Conn, singleUse bool, internalState
 		initialSettings = []http2Setting{
 			{ID: http2SettingEnablePush, Val: 0},
 			{ID: http2SettingInitialWindowSize, Val: uint32(cc.initialStreamRecvWindowSize)},
+			{ID: http2SettingMaxFrameSize, Val: conf.MaxReadFrameSize},
 		}
-		initialSettings = append(initialSettings, http2Setting{ID: http2SettingMaxFrameSize, Val: conf.MaxReadFrameSize})
-		if max := t.maxHeaderListSize(); max != 0 {
-			initialSettings = append(initialSettings, http2Setting{ID: http2SettingMaxHeaderListSize, Val: max})
+		if maxHeaderListSize != 0 {
+			initialSettings = append(initialSettings, http2Setting{ID: http2SettingMaxHeaderListSize, Val: maxHeaderListSize})
 		}
 		if maxHeaderTableSize != http2initialHeaderTableSize {
 			initialSettings = append(initialSettings, http2Setting{ID: http2SettingHeaderTableSize, Val: maxHeaderTableSize})
@@ -8173,16 +8205,21 @@ func (t *http2Transport) newClientConn(c net.Conn, singleUse bool, internalState
 	cc.bw.Write(http2clientPreface)
 	cc.fr.WriteSettings(initialSettings...)
 
-	// Send connection-level WINDOW_UPDATE. When fingerprinted, use
-	// the fingerprint's ConnectionFlow value; otherwise use the
-	// standard Go default.
+	// Send connection-level WINDOW_UPDATE. When fingerprinted, use the
+	// fingerprint's ConnectionFlow value; otherwise use the standard
+	// Go default. RFC 7540 Section 6.9.1 caps the increment at 2^31-1,
+	// so we clamp before issuing both calls to keep the wire frame and
+	// our local accounting in agreement.
+	connFlowIncr := uint32(conf.MaxUploadBufferPerConnection)
 	if t.fingerprint != nil && t.fingerprint.H2.ConnectionFlow > 0 {
-		cc.fr.WriteWindowUpdate(0, t.fingerprint.H2.ConnectionFlow)
-		cc.inflow.init(int32(t.fingerprint.H2.ConnectionFlow) + http2initialWindowSize)
-	} else {
-		cc.fr.WriteWindowUpdate(0, uint32(conf.MaxUploadBufferPerConnection))
-		cc.inflow.init(conf.MaxUploadBufferPerConnection + http2initialWindowSize)
+		connFlowIncr = t.fingerprint.H2.ConnectionFlow
 	}
+	if connFlowIncr > math.MaxInt32 {
+		connFlowIncr = math.MaxInt32
+	}
+
+	cc.fr.WriteWindowUpdate(0, connFlowIncr)
+	cc.inflow.init(http2safeAddInt32(int32(connFlowIncr), http2initialWindowSize))
 
 	// Send PRIORITY frames for placeholder streams during connection
 	// initialization. These establish a dependency tree that is part
@@ -8945,12 +8982,32 @@ func (cs *http2clientStream) encodeAndWriteHeaders(req *Request) error {
 	}
 	hdrs := cc.hbuf.Bytes()
 
-	// Write the request.
+	// Write the request. Pass the fingerprint's HEADERS priority so it
+	// is emitted on the initial HEADERS frame only; trailer HEADERS use
+	// the zero value below in writeTrailers.
 	endStream := !res.HasBody && !res.HasTrailers
 	cs.sentHeaders = true
-	err = cc.writeHeaders(cs.ID, endStream, int(cc.maxFrameSize), hdrs)
+	err = cc.writeHeaders(cs.ID, endStream, int(cc.maxFrameSize), hdrs, cc.fingerprintHeaderPriority())
 	http2traceWroteHeaders(cs.trace)
 	return err
+}
+
+// fingerprintHeaderPriority returns the PRIORITY param to attach to the
+// initial request HEADERS frame, derived from the configured fingerprint.
+// It returns the zero value when no fingerprint is set or HeaderPriority
+// is disabled, which suppresses the PRIORITY field on the wire.
+func (cc *http2ClientConn) fingerprintHeaderPriority() http2PriorityParam {
+	if cc.t.fingerprint == nil || !cc.t.fingerprint.H2.HeaderPriority.Enabled {
+		return http2PriorityParam{}
+	}
+
+	hp := cc.t.fingerprint.H2.HeaderPriority
+
+	return http2PriorityParam{
+		StreamDep: hp.StreamDep,
+		Exclusive: hp.Exclusive,
+		Weight:    hp.Weight,
+	}
 }
 
 func http2encodeRequestHeaders(req *Request, addGzipHeader bool, peerMaxHeaderListSize uint64, fp *Fingerprint, headerf func(name, value string)) (httpcommon.EncodeHeadersResult, error) {
@@ -9116,20 +9173,12 @@ func (cc *http2ClientConn) awaitOpenSlotForStreamLocked(cs *http2clientStream) e
 	}
 }
 
-// requires cc.wmu be held
-func (cc *http2ClientConn) writeHeaders(streamID uint32, endStream bool, maxFrameSize int, hdrs []byte) error {
-	// Resolve HEADERS frame priority from fingerprint. The zero-value
-	// H2Priority emits no priority; callers opt in via Enabled.
-	var priority http2PriorityParam
-	if fp := cc.t.fingerprint; fp != nil && fp.H2.HeaderPriority.Enabled {
-		hp := fp.H2.HeaderPriority
-		priority = http2PriorityParam{
-			StreamDep: hp.StreamDep,
-			Exclusive: hp.Exclusive,
-			Weight:    hp.Weight,
-		}
-	}
-
+// requires cc.wmu be held.
+//
+// priority is attached to the first HEADERS frame only. Pass the zero
+// value to suppress it (e.g. for trailer HEADERS frames, where browsers
+// do not emit PRIORITY).
+func (cc *http2ClientConn) writeHeaders(streamID uint32, endStream bool, maxFrameSize int, hdrs []byte, priority http2PriorityParam) error {
 	first := true // first frame written (HEADERS is first, then CONTINUATION)
 	for len(hdrs) > 0 && cc.werr == nil {
 		chunk := hdrs
@@ -9333,9 +9382,10 @@ func (cs *http2clientStream) writeRequestBody(req *Request) (err error) {
 	}
 
 	// Two ways to send END_STREAM: either with trailers, or
-	// with an empty DATA frame.
+	// with an empty DATA frame. Trailer HEADERS frames carry no
+	// PRIORITY (browsers don't emit one here).
 	if len(trls) > 0 {
-		err = cc.writeHeaders(cs.ID, true, maxFrameSize, trls)
+		err = cc.writeHeaders(cs.ID, true, maxFrameSize, trls, http2PriorityParam{})
 	} else {
 		err = cc.fr.WriteData(cs.ID, true, nil)
 	}
