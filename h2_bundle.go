@@ -8164,6 +8164,16 @@ func (t *http2Transport) newClientConn(c net.Conn, singleUse bool, internalState
 		if v, ok := t.fingerprint.H2.settingValue(H2SettingMaxHeaderListSize); ok {
 			maxHeaderListSize = v
 		}
+		// Align our per-stream receive window with the INITIAL_WINDOW_SIZE we
+		// advertise. Otherwise the peer may legally send up to the advertised
+		// value (e.g. Chrome's 6 MiB) while our stream inflow only grants the
+		// 4 MiB default, tripping FLOW_CONTROL_ERROR on large responses.
+		if v, ok := t.fingerprint.H2.settingValue(H2SettingInitialWindowSize); ok {
+			if v > math.MaxInt32 {
+				v = math.MaxInt32
+			}
+			cc.initialStreamRecvWindowSize = int32(v)
+		}
 	}
 
 	cc.fr.ReadMetaHeaders = hpack.NewDecoder(maxHeaderTableSize, nil)
