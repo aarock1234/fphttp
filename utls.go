@@ -47,6 +47,17 @@ func (pconn *persistConn) addTLSFingerprint(ctx context.Context, name string, tr
 		}
 	}
 
+	// A request that requires HTTP/1.1 (e.g. a WebSocket upgrade) must not let
+	// the server negotiate h2. Browser presets advertise both "h2" and
+	// "http/1.1" via ALPN, so rebuild the ClientHello with an http/1.1-only
+	// ALPN. The rest of the fingerprint is preserved.
+	if pconn.cacheKey.onlyH1 {
+		if err := forceUTLSHTTP1(tlsConn); err != nil {
+			plainConn.Close()
+			return fmt.Errorf("fphttp: forcing http/1.1 ALPN: %w", err)
+		}
+	}
+
 	if err := handshakeWithTimeout(ctx, tlsConn, pconn.t.TLSHandshakeTimeout, trace); err != nil {
 		plainConn.Close()
 		if trace != nil && trace.TLSHandshakeDone != nil {
@@ -111,12 +122,13 @@ func handshakeWithTimeout(ctx context.Context, tlsConn *utls.UConn, timeout time
 // crypto/tls.Config, translating fields that map one-to-one.
 // When tc is nil, the returned config has only ServerName set.
 //
-// Fields intentionally not translated (either uTLS-specific or
-// requiring type conversions that are rare in impersonation use):
-//   - Certificates (client cert auth, mTLS to origin)
+// For parity with crypto/tls, the verification callbacks, client
+// certificates (mTLS to the origin), and KeyLogWriter are translated too.
+//
+// Fields intentionally not translated (uTLS-specific or rarely needed
+// in impersonation use):
 //   - ClientSessionCache (uTLS has its own cache interface)
-//   - GetClientCertificate
-//   - Rand, Time, KeyLogWriter
+//   - Rand, Time
 //
 // If you need these, construct a *utls.Config yourself and dial
 // the connection outside of Transport.
@@ -143,8 +155,79 @@ func utlsConfigFromTLS(tc *tls.Config, serverName string) *utls.Config {
 	cfg.DynamicRecordSizingDisabled = tc.DynamicRecordSizingDisabled
 	cfg.Renegotiation = utls.RenegotiationSupport(tc.Renegotiation)
 	cfg.VerifyPeerCertificate = tc.VerifyPeerCertificate
+	cfg.KeyLogWriter = tc.KeyLogWriter
+
+	// VerifyConnection takes a package-local ConnectionState, so wrap the
+	// caller's callback to convert from utls back to crypto/tls.
+	if verify := tc.VerifyConnection; verify != nil {
+		cfg.VerifyConnection = func(ucs utls.ConnectionState) error {
+			return verify(convertUTLSConnectionState(ucs))
+		}
+	}
+
+	// Client certificates for mTLS. uTLS uses its own Certificate and
+	// CertificateRequestInfo types, so convert between them. The
+	// reconstructed CertificateRequestInfo does not carry the handshake
+	// context.
+	if len(tc.Certificates) > 0 {
+		cfg.Certificates = make([]utls.Certificate, len(tc.Certificates))
+		for i := range tc.Certificates {
+			cfg.Certificates[i] = toUTLSCertificate(tc.Certificates[i])
+		}
+	}
+	if get := tc.GetClientCertificate; get != nil {
+		cfg.GetClientCertificate = func(cri *utls.CertificateRequestInfo) (*utls.Certificate, error) {
+			cert, err := get(&tls.CertificateRequestInfo{
+				AcceptableCAs:    cri.AcceptableCAs,
+				SignatureSchemes: toTLSSignatureSchemes(cri.SignatureSchemes),
+				Version:          cri.Version,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			uc := toUTLSCertificate(*cert)
+			return &uc, nil
+		}
+	}
 
 	return cfg
+}
+
+// toUTLSCertificate converts a crypto/tls.Certificate to the equivalent
+// utls.Certificate. The two types are structurally identical.
+func toUTLSCertificate(c tls.Certificate) utls.Certificate {
+	uc := utls.Certificate{
+		Certificate:                 c.Certificate,
+		PrivateKey:                  c.PrivateKey,
+		OCSPStaple:                  c.OCSPStaple,
+		SignedCertificateTimestamps: c.SignedCertificateTimestamps,
+		Leaf:                        c.Leaf,
+	}
+
+	if c.SupportedSignatureAlgorithms != nil {
+		uc.SupportedSignatureAlgorithms = make([]utls.SignatureScheme, len(c.SupportedSignatureAlgorithms))
+		for i, s := range c.SupportedSignatureAlgorithms {
+			uc.SupportedSignatureAlgorithms[i] = utls.SignatureScheme(s)
+		}
+	}
+
+	return uc
+}
+
+// toTLSSignatureSchemes translates a slice of utls signature schemes to the
+// equivalent crypto/tls signature schemes.
+func toTLSSignatureSchemes(in []utls.SignatureScheme) []tls.SignatureScheme {
+	if in == nil {
+		return nil
+	}
+
+	out := make([]tls.SignatureScheme, len(in))
+	for i, s := range in {
+		out[i] = tls.SignatureScheme(s)
+	}
+
+	return out
 }
 
 // convertCurveIDs translates a slice of crypto/tls.CurveID to
@@ -160,6 +243,30 @@ func convertCurveIDs(in []tls.CurveID) []utls.CurveID {
 	}
 
 	return out
+}
+
+// forceUTLSHTTP1 rewrites the connection's ClientHello so its ALPN offers
+// only http/1.1. It must be called before the handshake. This is used for
+// requests that require HTTP/1.1 (e.g. WebSocket upgrades), where a browser
+// preset's default "h2, http/1.1" ALPN could otherwise let the server pick h2.
+func forceUTLSHTTP1(c *utls.UConn) error {
+	if err := c.BuildHandshakeState(); err != nil {
+		return err
+	}
+
+	for _, ext := range c.Extensions {
+		if alpn, ok := ext.(*utls.ALPNExtension); ok {
+			alpn.AlpnProtocols = []string{"http/1.1"}
+		}
+	}
+
+	// Re-apply the mutated extensions and re-marshal so both the wire bytes
+	// and the connection state reflect the http/1.1-only ALPN.
+	if err := c.ApplyConfig(); err != nil {
+		return err
+	}
+
+	return c.MarshalClientHello()
 }
 
 // convertUTLSConnectionState converts a utls ConnectionState to a

@@ -1728,10 +1728,11 @@ func (t *Transport) decConnsPerHost(key connectMethodKey) {
 // tunnel, this function establishes a nested TLS session inside the encrypted channel.
 // The remote endpoint's name may be overridden by TLSClientConfig.ServerName.
 func (pconn *persistConn) addTLS(ctx context.Context, name string, trace *httptrace.ClientTrace) error {
-	// When a fingerprint is configured and we are not restricted to
-	// HTTP/1.1 only, use uTLS for the handshake to produce a
-	// browser-like ClientHello.
-	if fp := pconn.t.Fingerprint; fp != nil && !pconn.cacheKey.onlyH1 {
+	// When a fingerprint is configured, use uTLS for the handshake to
+	// produce a browser-like ClientHello. For HTTP/1.1-only connections
+	// (e.g. WebSocket upgrades) addTLSFingerprint forces an http/1.1-only
+	// ALPN so the server cannot negotiate h2.
+	if fp := pconn.t.Fingerprint; fp != nil {
 		return pconn.addTLSFingerprint(ctx, name, trace, fp)
 	}
 
