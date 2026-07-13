@@ -10,7 +10,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+<<<<<<< ours
 	"github.com/aarock1234/fphttp"
+=======
+	"internal/godebug"
+>>>>>>> upstream
 	"io"
 	"log"
 	"mime"
@@ -923,10 +927,23 @@ func (c switchProtocolCopier) copyToBackend(errc chan<- error) {
 	errc <- errCopyDone
 }
 
+var urlmaxqueryparams = godebug.New("urlmaxqueryparams")
+
+// Keep this in sync with net/url.
+const defaultMaxParams = 10000
+
 func cleanQueryParams(s string) string {
 	reencode := func(s string) string {
 		v, _ := url.ParseQuery(s)
 		return v.Encode()
+	}
+	if urlmaxqueryparams.Value() != "" {
+		// Always reencode when a non-default urlmaxqueryparams is set.
+		return reencode(s)
+	}
+	if numParams := strings.Count(s, "&") + 1; numParams > defaultMaxParams {
+		// Too many query parameters.
+		return reencode(s)
 	}
 	for i := 0; i < len(s); {
 		switch s[i] {
