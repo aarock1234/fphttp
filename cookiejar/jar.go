@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package cookiejar implements an in-memory RFC 6265-compliant http.CookieJar.
+// Package cookiejar implements an in-memory [RFC 6265]-compliant [http.CookieJar].
+//
+// [RFC 6265]: https://www.rfc-editor.org/info/rfc6265
 package cookiejar
 
 import (
 	"cmp"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"net"
 	"net/netip"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aarock1234/fphttp"
 	"github.com/aarock1234/fphttp/internal/ascii"
 )
 
@@ -34,7 +36,7 @@ import (
 // set a cookie for bar.com.
 //
 // A public suffix list implementation is in the package
-// golang.org/x/net/publicsuffix.
+// [golang.org/x/net/publicsuffix].
 type PublicSuffixList interface {
 	// PublicSuffix returns the public suffix of domain.
 	//
@@ -49,7 +51,7 @@ type PublicSuffixList interface {
 	String() string
 }
 
-// Options are the options for creating a new Jar.
+// Options are the options for creating a new [Jar].
 type Options struct {
 	// PublicSuffixList is the public suffix list that determines whether
 	// an HTTP server can set a cookie for a domain.
@@ -60,7 +62,7 @@ type Options struct {
 	PublicSuffixList PublicSuffixList
 }
 
-// Jar implements the http.CookieJar interface from the net/http package.
+// Jar implements the [net/http.CookieJar] interface.
 type Jar struct {
 	psList PublicSuffixList
 

@@ -4,7 +4,9 @@
 
 package http
 
-import "math"
+import (
+	"math"
+)
 
 // A routingIndex optimizes conflict detection by indexing patterns.
 //

@@ -114,6 +114,14 @@ type genericClientConn interface {
 func (t *Transport) NewClientConn(ctx context.Context, scheme, address string) (*ClientConn, error) {
 	t.nextProtoOnce.Do(t.onceSetNextProtoDefaults)
 
+	if t.h2Config != nil {
+		// Handle x/net/http2.Transport.NewClientConn passing us a net.Conn
+		// to create a ClientConn from.
+		if cc, err := t.http2NewClientConnFromContext(ctx); err != errors.ErrUnsupported {
+			return cc, err
+		}
+	}
+
 	switch scheme {
 	case "http", "https":
 	default:
@@ -246,6 +254,23 @@ func validateClientConnRequest(req *Request) error {
 // before sending the request.
 func (cc *ClientConn) RoundTrip(req *Request) (*Response, error) {
 	defer cc.maybeRunStateHook()
+	if req.URL == nil && req.Method == ":ping" {
+		// Undocumented feature for sending a PING frame to a HTTP/2 connection,
+		// included to support x/net/http2.ClientConn.Ping.
+		pinger, ok := cc.cc.(interface {
+			Ping(context.Context) error
+		})
+		if !ok {
+			return nil, errors.New("http: ClientConn does not support PING")
+		}
+		if err := pinger.Ping(req.Context()); err != nil {
+			return nil, err
+		}
+		return &Response{
+			StatusCode: 200,
+			Body:       NoBody,
+		}, nil
+	}
 	if err := validateClientConnRequest(req); err != nil {
 		cc.Release()
 		return nil, err
@@ -381,7 +406,7 @@ func (cc http1ClientConn) RoundTrip(req *Request) (*Response, error) {
 	ctx := req.Context()
 	trace := httptrace.ContextClientTrace(ctx)
 
-	// Convert Request.Cancel into context cancelation.
+	// Convert Request.Cancel into context cancellation.
 	ctx, cancel := context.WithCancelCause(req.Context())
 	if req.Cancel != nil {
 		go awaitLegacyCancel(ctx, cancel, req)

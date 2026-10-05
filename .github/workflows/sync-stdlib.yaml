@@ -1,11 +1,21 @@
-name: Sync net/http from Go stdlib
+name: Sync net/http from Go main
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Go branch, tag, or commit
+        required: true
+        default: master
+        type: string
 
 permissions:
   contents: write
   pull-requests: write
+
+concurrency:
+  group: sync-stdlib
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -14,67 +24,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Resolve Go version
-        id: version
-        run: |
-          version=$(curl -sf 'https://go.dev/dl/?mode=json' | jq -r '.[0].version')
-          base=$(cat .stdlib-version 2>/dev/null || echo "")
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
 
-          if [ "$base" = "$version" ]; then
-            echo "already at $version"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Merge production sources
+        id: sync
+        env:
+          UPSTREAM_REF: ${{ inputs.ref }}
+        run: go run ./internal/cmd/syncstdlib -ref "$UPSTREAM_REF" -github-output "$GITHUB_OUTPUT"
 
-          echo "tag=$version" >> "$GITHUB_OUTPUT"
-          echo "base=$base" >> "$GITHUB_OUTPUT"
+      - name: Build
+        if: steps.sync.outputs.changed == 'true'
+        run: go build ./...
 
-      - name: Sync upstream files
-        if: steps.version.outputs.skip == 'false'
-        run: |
-          new="${{ steps.version.outputs.tag }}"
-          base="${{ steps.version.outputs.base }}"
+      - name: Check production source
+        if: steps.sync.outputs.changed == 'true'
+        run: go run ./internal/cmd/checksource
 
-          # download new upstream
-          curl -sfL "https://github.com/golang/go/archive/refs/tags/${new}.tar.gz" -o /tmp/new.tar.gz
-          root=$(tar tf /tmp/new.tar.gz 2>/dev/null | head -1 | cut -d'/' -f1)
-          mkdir -p /tmp/new
-          tar xzf /tmp/new.tar.gz -C /tmp/new --strip-components=4 "${root}/src/net/http/"
-
-          # download base upstream for three-way merge
-          if [ -n "$base" ]; then
-            curl -sfL "https://github.com/golang/go/archive/refs/tags/${base}.tar.gz" -o /tmp/base.tar.gz
-            root=$(tar tf /tmp/base.tar.gz 2>/dev/null | head -1 | cut -d'/' -f1)
-            mkdir -p /tmp/base
-            tar xzf /tmp/base.tar.gz -C /tmp/base --strip-components=4 "${root}/src/net/http/"
-          fi
-
-          find /tmp/new -type f -print0 | while IFS= read -r -d '' file; do
-            rel="${file#/tmp/new/}"
-            case "$rel" in *_test.go) continue ;; esac
-            [ -f "./$rel" ] || continue
-
-            if [ -n "$base" ] && [ -f "/tmp/base/$rel" ]; then
-              # three-way merge: preserves local modifications, applies upstream delta
-              git merge-file -L ours -L base -L upstream "./$rel" "/tmp/base/$rel" "/tmp/new/$rel" || true
-            else
-              cp "$file" "./$rel"
-            fi
-          done
-
-          echo "$new" > .stdlib-version
-
-          # update go directive in go.mod
-          go_version="${new#go}"
-          sed -i "s/^go .*/go $go_version/" go.mod
+      - name: Check patch
+        if: steps.sync.outputs.changed == 'true'
+        run: git diff --check
 
       - name: Create PR
-        if: steps.version.outputs.skip == 'false'
+        if: steps.sync.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
-          commit-message: "sync: update net/http from Go ${{ steps.version.outputs.tag }}"
-          branch: sync/stdlib-${{ steps.version.outputs.tag }}
-          title: "sync: update net/http from Go ${{ steps.version.outputs.tag }}"
-          body: "Synced from [src/net/http](https://github.com/golang/go/tree/${{ steps.version.outputs.tag }}/src/net/http) in Go ${{ steps.version.outputs.tag }}."
+          commit-message: "sync: update net/http from Go ${{ steps.sync.outputs.revision }}"
+          branch: sync/stdlib-${{ steps.sync.outputs.revision }}
+          title: "sync: update net/http from Go ${{ steps.sync.outputs.revision }}"
+          body: |
+            Updated production sources from [Go main](https://github.com/golang/go/tree/${{ steps.sync.outputs.revision }}/src/net/http).
+
+            Three-way merges preserve local fingerprint changes and stop on conflicts. New and removed upstream files are included. Production builds, formatting checks, static analysis, and patch checks must pass before this PR is created.
+
+            The source adaptations and manually maintained exceptions are described in the README.
           delete-branch: true

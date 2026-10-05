@@ -10,9 +10,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"strings"
+
+	"github.com/aarock1234/fphttp"
 )
 
 // NewRequest wraps NewRequestWithContext using context.Background.

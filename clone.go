@@ -8,7 +8,6 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"net/url"
-	_ "unsafe" // for linkname
 )
 
 // cloneURLValues should be an internal detail,
@@ -18,8 +17,6 @@ import (
 //
 // Do not remove or change the type signature.
 // See go.dev/issue/67401.
-//
-//go:linkname cloneURLValues
 func cloneURLValues(v url.Values) url.Values {
 	if v == nil {
 		return nil
@@ -36,19 +33,8 @@ func cloneURLValues(v url.Values) url.Values {
 //
 // Do not remove or change the type signature.
 // See go.dev/issue/67401.
-//
-//go:linkname cloneURL
 func cloneURL(u *url.URL) *url.URL {
-	if u == nil {
-		return nil
-	}
-	u2 := new(url.URL)
-	*u2 = *u
-	if u.User != nil {
-		u2.User = new(url.Userinfo)
-		*u2.User = *u.User
-	}
-	return u2
+	return u.Clone()
 }
 
 // cloneMultipartForm should be an internal detail,
@@ -58,8 +44,6 @@ func cloneURL(u *url.URL) *url.URL {
 //
 // Do not remove or change the type signature.
 // See go.dev/issue/67401.
-//
-//go:linkname cloneMultipartForm
 func cloneMultipartForm(f *multipart.Form) *multipart.Form {
 	if f == nil {
 		return nil
@@ -88,8 +72,6 @@ func cloneMultipartForm(f *multipart.Form) *multipart.Form {
 //
 // Do not remove or change the type signature.
 // See go.dev/issue/67401.
-//
-//go:linkname cloneMultipartFileHeader
 func cloneMultipartFileHeader(fh *multipart.FileHeader) *multipart.FileHeader {
 	if fh == nil {
 		return nil
@@ -110,8 +92,6 @@ func cloneMultipartFileHeader(fh *multipart.FileHeader) *multipart.FileHeader {
 //
 // Do not remove or change the type signature.
 // See go.dev/issue/67401.
-//
-//go:linkname cloneOrMakeHeader
 func cloneOrMakeHeader(hdr Header) Header {
 	clone := hdr.Clone()
 	if clone == nil {

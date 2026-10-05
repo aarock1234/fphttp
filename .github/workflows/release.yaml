@@ -19,6 +19,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Publish GitHub release
@@ -32,22 +36,27 @@ jobs:
 
       - name: Determine tag
         id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BUMP: ${{ inputs.bump }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            # triggered by a tag push; release that tag as-is.
+          if [ "$EVENT_NAME" = "push" ]; then
             version="${GITHUB_REF#refs/tags/}"
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "needs_tag=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          latest=$(git tag --list 'v*.*.*' --sort=-v:refname | head -1)
-          if [ -z "$latest" ]; then
-            latest="v0.0.0"
-          fi
+          latest=""
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              latest="$tag"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-version:refname)
 
-          if [ "${{ inputs.bump }}" = "none" ]; then
-            if [ "$latest" = "v0.0.0" ]; then
+          if [ "$BUMP" = "none" ]; then
+            if [ -z "$latest" ]; then
               echo "no existing tag to release; choose patch/minor/major" >&2
               exit 1
             fi
@@ -56,14 +65,14 @@ jobs:
             exit 0
           fi
 
-          major=$(echo "$latest" | cut -d. -f1 | tr -d v)
-          minor=$(echo "$latest" | cut -d. -f2)
-          patch=$(echo "$latest" | cut -d. -f3)
+          latest="${latest:-v0.0.0}"
+          IFS=. read -r major minor patch <<< "${latest#v}"
 
-          case "${{ inputs.bump }}" in
+          case "$BUMP" in
             major) major=$((major + 1)); minor=0; patch=0 ;;
             minor) minor=$((minor + 1)); patch=0 ;;
             patch) patch=$((patch + 1)) ;;
+            *) echo "unsupported version bump: $BUMP" >&2; exit 1 ;;
           esac
 
           echo "version=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
@@ -74,17 +83,28 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Build source checker
+        run: go build -o "$RUNNER_TEMP/fphttp-checksource" ./internal/cmd/checksource
+
+      - name: Select tagged source
+        if: steps.tag.outputs.needs_tag == 'false'
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.version }}
+        run: git checkout --detach "refs/tags/$RELEASE_TAG"
+
       - name: Build
         run: go build ./...
 
-      - name: Vet
-        run: go vet ./...
+      - name: Check production source
+        run: '"$RUNNER_TEMP/fphttp-checksource"'
 
       - name: Tag and push
         if: steps.tag.outputs.needs_tag == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.version }}
         run: |
-          git tag "${{ steps.tag.outputs.version }}"
-          git push origin "${{ steps.tag.outputs.version }}"
+          git tag "$RELEASE_TAG"
+          git push origin "refs/tags/$RELEASE_TAG"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

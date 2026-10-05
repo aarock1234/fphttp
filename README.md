@@ -1,20 +1,18 @@
 # fphttp
 
-A fork of Go's `net/http` package with TLS fingerprinting, HTTP/1.1 header ordering, and HTTP/2 connection fingerprinting built in.
+fphttp is a fork of Go's `net/http` with browser TLS profiles, header ordering, and HTTP/2 fingerprint controls. It keeps Go's client and server APIs, connection pooling, and request cancellation.
 
-By building on the standard library rather than reimplementing HTTP from scratch, fphttp inherits all of Go's HTTP functionality (connection pooling, H2 flow control, GOAWAY handling, etc.) and only adds surgical modifications for fingerprinting.
+Requires Go 1.27.1 or newer.
 
 ## Install
 
-```bash
-go get github.com/aarock1234/fphttp
+```sh
+go get github.com/aarock1234/fphttp@v1.3.0
 ```
 
-## Usage
+## Use a browser profile
 
-fphttp is a drop-in replacement for `net/http`. Import it and set a `Fingerprint` on the `Transport`.
-
-### Using a browser profile
+Import fphttp as `http` and set a profile on your transport. Reuse the client for subsequent requests.
 
 ```go
 package main
@@ -22,193 +20,160 @@ package main
 import (
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
+	"time"
 
 	http "github.com/aarock1234/fphttp"
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("request failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Fingerprint = http.Chrome()
+	defer transport.CloseIdleConnections()
+
 	client := &http.Client{
-		Transport: &http.Transport{
-			Fingerprint: http.Chrome(),
-		},
+		Transport: transport,
+		Timeout:   15 * time.Second,
 	}
 
 	resp, err := client.Get("https://example.com")
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("send request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
-	fmt.Println(string(body))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("unexpected response status: %s", resp.Status)
+	}
+	if _, err := io.Copy(os.Stdout, resp.Body); err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	return nil
 }
 ```
 
-Desktop profiles: `Chrome()`, `Firefox()`, `Safari()`, `Edge()`, `Brave()`.
+Read successful response bodies to EOF and close them so connections can be reused. Use request contexts and client deadlines to bound request lifetime.
 
-Mobile profiles: `SafariIOS()` (iOS and iPadOS), `ChromeAndroid()`.
+Profiles control protocol settings and header order. Supply your own User-Agent, client hints, cookies, and other browser headers. Only advertise encodings your application can decode; fphttp automatically decodes gzip.
 
-Profiles configure TLS and HTTP/2 connection-level fingerprinting (ClientHello, SETTINGS, WINDOW_UPDATE, pseudo-header order, and init PRIORITY frames). Per-request header ordering should be set via `Request.HeaderOrder` or `Fingerprint.HeaderOrder` as needed, since it varies by request type.
+fphttp's request, response, and transport types are distinct from those in `net/http`.
 
-### Selecting a profile by browser and platform
+## Profiles
 
-`Profile(browser, platform)` resolves a `(Browser, Platform)` pair to the closest fingerprint. It is the preferred entry point for consumers that model browser choice as configuration rather than code.
+Choose a constructor directly or select a browser and platform:
 
 ```go
-transport := &http.Transport{
-	Fingerprint: http.Profile(http.BrowserChrome, http.PlatformMac),
-}
+profile := http.Profile(http.BrowserChrome, http.PlatformMac)
 ```
 
-On iOS and iPadOS every browser uses WebKit under Apple's App Store rules, so any browser on those platforms resolves to `SafariIOS()`. `Profile` returns `nil` if the pair has no defined mapping.
+| Constructors | Baseline |
+| --- | --- |
+| `Chrome()`, `Chrome148()`, `Chrome148Fetch()` | Windows Chrome 148 navigation and fetch |
+| `Chrome120()`, `Chrome131()`, `Chrome133()` | Versioned uTLS Chrome presets |
+| `ChromeMac()`, `ChromeMacFetch()` | Captured Mac Chrome HTTP/2 behavior with supported Chrome 133 TLS |
+| `Chrome154MacHTTP2()`, `Chrome154MacHTTP2Fetch()` | Mac Chrome 154 HTTP/2 behavior; TLS stays with your dialer or `crypto/tls` |
+| `Safari()`, `Safari27()`, `Safari27Fetch()` | Mac Safari 27 navigation and fetch |
+| `Safari26()` | Published Mac Safari 26.0.1 baseline |
+| `SafariIOS()`, `SafariIOS27()`, `SafariIOS27Fetch()` | iPhone Safari 27.0.1 navigation and fetch |
+| `Firefox()`, `Firefox144()` | Published Firefox 144 baseline |
+| `Firefox120()` | Historical Firefox 120 TLS and HTTP/2 priority tree |
+| `Edge()`, `Brave()`, `ChromeAndroid()` | Shared Chromium baseline, without separate browser captures |
 
-Available browsers: `BrowserChrome`, `BrowserFirefox`, `BrowserSafari`, `BrowserEdge`, `BrowserBrave`.
+`Profile` returns `nil` for unsupported combinations. iOS and iPadOS selections use the captured WebKit profile. Browser builds using another engine need a custom profile.
 
-Available platforms: `PlatformWindows`, `PlatformMac`, `PlatformLinux`, `PlatformIOS`, `PlatformIPadOS`, `PlatformAndroid`.
+Mac Chrome 154 advertises ML-DSA signatures and a trust-anchor extension that uTLS 1.8.2 does not implement. The Mac Chrome profiles document this TLS limitation. Windows Chrome 148's TLS parameters match uTLS's Chrome 133 preset.
 
-### Custom fingerprint
+Chromium shuffles TLS extensions. Browsers also generate fresh GREASE values and key material, so profiles do not replay fixed JA3 strings. Header order follows the captures; header values and other browser behavior remain your application's responsibility.
+
+The published baselines come from [Safari 26.0.1](https://github.com/lexiforest/curl-impersonate/blob/3f5d207ba9101a779a65ced1288c32aeec762d66/tests/signatures/safari_26.0.1_macOS.yaml) and [Firefox 144](https://github.com/lexiforest/curl-impersonate/blob/3f5d207ba9101a779a65ced1288c32aeec762d66/tests/signatures/firefox_144.0.0_linux.yaml) captures. The Firefox capture identifies macOS despite its filename.
+
+## Request overrides
+
+Change header order or priority for individual requests while keeping one connection pool:
 
 ```go
-transport := &http.Transport{
-	Fingerprint: &http.Fingerprint{
-		ClientHelloID: utls.HelloChrome_120,
-		HeaderOrder: []string{
-			"Host",
-			"User-Agent",
-			"Accept",
-			"Accept-Language",
-			"Accept-Encoding",
-			"Connection",
-		},
-		PseudoHeaderOrder: []string{
-			":method",
-			":authority",
-			":scheme",
-			":path",
-		},
-		H2: http.H2Fingerprint{
-			Settings: []http.H2Setting{
-				{ID: http.H2SettingHeaderTableSize, Val: 65536},
-				{ID: http.H2SettingEnablePush, Val: 0},
-				{ID: http.H2SettingInitialWindowSize, Val: 6291456},
-				{ID: http.H2SettingMaxHeaderListSize, Val: 262144},
-			},
-			ConnectionFlow: 15663105,
-			HeaderPriority: http.H2Priority{
-				Enabled: true,
-				Weight:  255,
-			},
-		},
-	},
+req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+if err != nil {
+	return err
 }
+
+fetch := http.Chrome148Fetch()
+req.HeaderOrder = fetch.HeaderOrder
+req.H2Priority = new(fetch.H2.HeaderPriority)
+req.Header.Set("Accept", "application/json")
+req.Header.Set("Priority", "u=1, i")
 ```
 
-`H2Priority.Enabled` must be `true` for the HEADERS priority to be emitted. The zero value emits no priority, matching stdlib behavior.
+Non-nil request orders override the transport profile. An empty slice selects Go's default order. Unlisted regular headers follow in sorted order. Clones and redirects preserve these overrides.
 
-### Custom ClientHello
+`H2Priority.Enabled` controls whether a request sends legacy HEADERS priority. Set it to `true` for custom priorities. `Weight` is the wire value, from 0 to 255, representing effective weights 1 to 256. A request priority with `Enabled: false` suppresses the signal.
 
-uTLS ships presets for common browser versions (`utls.HelloChrome_120`, `HelloChrome_131`, `HelloFirefox_120`, `HelloIOS_14`, etc.). When no preset matches — for example, to mimic a browser version uTLS has not published, or to reproduce a specific JA3/JA4 — provide a `ClientHelloSpec`.
+## Custom profiles
+
+Clone a profile before changing it, then validate your configuration:
 
 ```go
-spec := &utls.ClientHelloSpec{
-	// ... cipher suites, extensions, TLS version bounds, etc.
+profile := http.Chrome148().Clone()
+profile.HeaderOrder = []string{
+	"Host",
+	"User-Agent",
+	"Accept",
+	"Accept-Encoding",
 }
-transport := &http.Transport{
-	Fingerprint: &http.Fingerprint{
-		ClientHelloID:   utls.HelloCustom,
-		ClientHelloSpec: spec,
-	},
-}
-```
 
-When `ClientHelloSpec` is non-nil, set `ClientHelloID` to `utls.HelloCustom`. uTLS applies the spec via `ApplyPreset` during the handshake.
-
-### Inheriting from `TLSClientConfig`
-
-When a `Fingerprint` is set, the following fields of `Transport.TLSClientConfig` are passed through to the uTLS config: `ServerName`, `InsecureSkipVerify`, `RootCAs`, `NextProtos`, `MinVersion`, `MaxVersion`, `CipherSuites`, `CurvePreferences`, `PreferServerCipherSuites`, `SessionTicketsDisabled`, `DynamicRecordSizingDisabled`, `Renegotiation`, `VerifyPeerCertificate`.
-
-Fields not currently translated: `Certificates` (client cert auth), `ClientSessionCache`, `GetClientCertificate`, `Rand`, `Time`, `KeyLogWriter`. Construct a `*utls.Config` directly and dial outside of `Transport` if you need these.
-
-### Per-request header order
-
-`HeaderOrder` and `PseudoHeaderOrder` can also be set per-request. Per-request values take priority over the Transport's fingerprint defaults.
-
-```go
-req, _ := http.NewRequest("GET", "https://example.com", nil)
-req.HeaderOrder = []string{"Accept", "User-Agent", "Accept-Encoding"}
-```
-
-### Validating a fingerprint
-
-Use `Validate()` to catch misconfigurations early. It returns every problem joined via `errors.Join`, not just the first.
-
-```go
-fp := &http.Fingerprint{
-	PseudoHeaderOrder: []string{":method", ":path"},
-	HeaderOrder:       []string{"content-type"},
-}
-if err := fp.Validate(); err != nil {
-	log.Fatal(err)
-	// fphttp: PseudoHeaderOrder missing required pseudo-header ":authority"
-	// fphttp: HeaderOrder key "content-type" is not canonical, use "Content-Type"
+if err := profile.Validate(); err != nil {
+	return err
 }
 ```
 
-`Validate()` checks for: missing, duplicate, or unknown pseudo-headers, duplicate H2 setting IDs, invalid PRIORITY stream IDs, and non-canonical header keys.
+Keep profiles and TLS configuration immutable after the transport starts using them. A nil fingerprint uses Go's TLS and HTTP defaults.
 
-### Cloning a fingerprint
+`Fingerprint.H2` controls ordered SETTINGS, the connection-window increment, the first stream ID, and optional priority frames. Custom SETTINGS must include `ENABLE_PUSH = 0`. `ConnectionFlow` adds to the initial 65,535-byte window. Zero uses Go's increment. `InitialStreamID` must be an odd 31-bit value; zero uses stream 1.
 
-```go
-fp := http.Chrome()
-custom := fp.Clone()
-custom.HeaderOrder = []string{"Host", "User-Agent", "Accept"}
+Header names must be canonical and unique. A custom pseudo-header order must contain `:method`, `:authority`, `:scheme`, and `:path` exactly once. Setting `NO_RFC7540_PRIORITIES = 1` cannot be combined with legacy priority signals. External HTTP/2 transports cannot be combined with a fingerprint.
+
+For TLS, choose a uTLS `ClientHelloID` or provide a custom `ClientHelloSpec` or `ClientHelloSpecFactory`. A zero `ClientHelloID` keeps `crypto/tls`. Custom specs cannot be combined with a named preset.
+
+Templates copy supported extensions for each connection. Stateful or third-party extensions require a factory that returns fresh, independently owned state. Factories may be called concurrently.
+
+The uTLS integration honors supported TLS restrictions, roots, verification callbacks, and static client certificates. Use `Fingerprint.GetClientCertificate` for dynamic certificate selection and `Fingerprint.ClientSessionCache` for a concurrent uTLS session cache. A nil cache disables resumption. Resumption also needs a preset with a compatible PSK extension.
+
+HTTPS proxies use a separate TLS handshake before the CONNECT tunnel. The origin profile applies inside that tunnel. ALPN advertises only protocols the transport can use.
+
+`Response.TLS` contains converted uTLS metadata. It cannot expose the negotiated curve or support `ExportKeyingMaterial`. Use `crypto/tls` or retain your own uTLS connection if you need those APIs.
+
+## TCP and HTTP/3
+
+Selecting a profile does not change your operating system's TCP stack. TCP options, receive windows, and TTL depend on the host and network path. Match the host or proxy egress environment when you need its TCP fingerprint.
+
+fphttp has no built-in HTTP/3 client. Go's HTTP/3 integration hooks do not supply a QUIC transport or browser HTTP/3 fingerprinting.
+
+## Maintain the fork
+
+The production HTTP sources follow [Go main at `a90c4a7`](https://github.com/golang/go/tree/a90c4a7a586c70f0de61f5507d5c347702432e39/src/net/http). `.stdlib-version` records the exact revision. Browser TLS uses [uTLS 1.8.2](https://github.com/refraction-networking/utls/tree/v1.8.2).
+
+Sync a new Go revision and check the resulting code:
+
+```sh
+go run ./internal/cmd/syncstdlib -ref master
+go build ./...
+go run ./internal/cmd/checksource
+git diff --check
 ```
 
-`Clone` deep-copies slices but shares the `ClientHelloSpec` pointer. Treat a spec as immutable after use.
+The sync stages three-way merges before writing checkout files and stops on conflicts. A filesystem write failure can leave a partial diff. `checksource` checks formatting and vets production code.
 
-### No fingerprint (standard behavior)
+The standalone fork uses local copies of private HTTP helpers, a bounded MIME parser, and owned HTTP/2 writer-result channels. Runtime aliases are removed. The local `GODEBUG` adapter reads environment settings without runtime metrics or module defaults.
 
-When `Fingerprint` is nil, the Transport behaves identically to the standard library. There are zero changes to default behavior.
+`httptest/server.go` and its certificate helper retain Go 1.26.5 because the newer code needs runtime support. Private HTTP/3 sources and existing test files are excluded from the production sync.
 
-## What changed from `net/http`
-
-All modifications are additive. Existing behavior is preserved when `Fingerprint` is nil.
-
-### New files
-
-| File             | Purpose                                                                                                                        |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `fingerprint.go` | `Fingerprint`, `H2Fingerprint`, `H2Priority`, `H2PriorityFrame`, `H2Setting`, `H2SettingID` types, `Clone()`, and `Validate()` |
-| `profile.go`     | `Browser`/`Platform` enums, `Profile()` resolver, and `Chrome()`, `Firefox()`, `Safari()`, `SafariIOS()`, `Edge()`, `Brave()`, `ChromeAndroid()` constructors |
-| `utls.go`        | `utlsConn` wrapper, `addTLSFingerprint()`, `utlsConfigFromTLS()` translation helper, `convertUTLSConnectionState()`            |
-
-### Modified files
-
-| File                                | What changed                                                                                                                                                                                                       |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `transport.go`                      | `Fingerprint` field on `Transport`, `Clone()` deep-copy, `addTLS()` delegates to uTLS when fingerprinted, H2 upgrade path broadened to avoid `*tls.Conn` panic, `writeLoop` passes Transport header order fallback |
-| `request.go`                        | `HeaderOrder`/`PseudoHeaderOrder` fields on `Request`, `Clone()` copies them, `write()` accepts header order fallback parameter                                                                                    |
-| `header.go`                         | `writeSubsetOrdered()` method for ordered HTTP/1.1 header writing                                                                                                                                                  |
-| `h2_bundle.go`                      | `fingerprint` field on `http2Transport`, fingerprint-aware SETTINGS/WINDOW_UPDATE in `newClientConn`, pseudo-header and header ordering in `http2encodeRequestHeaders`, HEADERS frame priority in `writeHeaders`   |
-| `internal/httpcommon/httpcommon.go` | `PseudoHeaderOrder`/`HeaderOrder` fields on `EncodeHeadersParam`, `enumerateHeaders` rewritten to respect configured ordering                                                                                      |
-
-### What each feature does
-
-- **TLS fingerprinting**: Uses [uTLS](https://github.com/refraction-networking/utls) to produce browser-like ClientHello messages instead of Go's default TLS fingerprint. Configured via `Fingerprint.ClientHelloID` for named presets, or `Fingerprint.ClientHelloSpec` for fully custom handshakes.
-- **HTTP/1.1 header ordering**: Headers are written on the wire in the order specified by `Fingerprint.HeaderOrder` (or `Request.HeaderOrder`). Unspecified headers are appended in sorted order.
-- **HTTP/2 pseudo-header ordering**: The four pseudo-headers (`:method`, `:authority`, `:scheme`, `:path`) are emitted in the order specified by `Fingerprint.PseudoHeaderOrder`. Different browsers use different orders.
-- **HTTP/2 SETTINGS frame**: The SETTINGS frame sent during connection setup uses the exact settings and order from `Fingerprint.H2.Settings`.
-- **HTTP/2 WINDOW_UPDATE**: The initial connection-level window update uses `Fingerprint.H2.ConnectionFlow`.
-- **HTTP/2 HEADERS priority**: HEADERS frames include the priority signal from `Fingerprint.H2.HeaderPriority` when `Enabled` is set.
-- **HTTP/2 init PRIORITY frames**: Standalone PRIORITY frames sent during connection initialization to establish a dependency tree (part of the Akamai HTTP/2 fingerprint). Configured via `Fingerprint.H2.InitPriorityFrames`. Firefox's profile includes these by default.
-- **Fingerprint validation**: `Fingerprint.Validate()` catches common misconfigurations and aggregates all problems via `errors.Join`.
-
-## Testing
-
-```bash
-# Unit tests (no network required)
-go test -run "TestFingerprint_|TestHeader_|TestH2SettingID|TestProfile" -v .
-
-# Integration tests (requires network, hits tls.peet.ws)
-go test -tags integration -run "TestIntegration_" -v .
-```
+Go's copied sources retain their BSD license in [LICENSE](LICENSE).

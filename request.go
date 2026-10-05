@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/textproto"
@@ -30,8 +31,7 @@ import (
 
 	"github.com/aarock1234/fphttp/httptrace"
 	"github.com/aarock1234/fphttp/internal/ascii"
-
-	_ "unsafe" // for linkname
+	"github.com/aarock1234/fphttp/internal/headerparse"
 )
 
 const (
@@ -281,6 +281,10 @@ type Request struct {
 	// the request body is read. Once the body returns EOF, the caller must
 	// not mutate Trailer.
 	//
+	// Writing a request whose Trailer contains a key with invalid bytes
+	// (such as CR or LF), or such a value present when Write begins,
+	// returns an error.
+	//
 	// Few HTTP clients, servers, or proxies support HTTP trailers.
 	Trailer Header
 
@@ -293,19 +297,26 @@ type Request struct {
 	// (non-pseudo) headers; names are lowercased automatically.
 	//
 	// If nil, the Transport's Fingerprint.HeaderOrder is used as a
-	// fallback. If both are nil, headers are written in sorted order.
+	// fallback. If both are nil, Go's default header writing is used.
+	// An explicitly empty slice disables the fingerprint's order.
 	//
 	// This field is ignored by the HTTP server.
 	HeaderOrder []string
 
 	// PseudoHeaderOrder specifies the order of HTTP/2 pseudo-headers
-	// (:method, :authority, :scheme, :path). All four must be present
-	// for a non-CONNECT request. If nil, the Transport's
+	// (:method, :authority, :scheme, :path). A nonempty order must
+	// contain all four exactly once. If nil, the Transport's
 	// Fingerprint.PseudoHeaderOrder is used as a fallback. If both
-	// are nil, the standard Go order is used.
+	// are nil, the standard Go order is used. An explicitly empty
+	// slice selects the standard Go order without the fallback.
 	//
 	// This field is ignored for HTTP/1.1 requests and by the HTTP server.
 	PseudoHeaderOrder []string
+
+	// H2Priority overrides the fingerprint's HEADERS priority for this request.
+	// Nil uses the fingerprint; a non-nil value with Enabled false omits legacy
+	// priority. This field is ignored for HTTP/1.1 and by the HTTP server.
+	H2Priority *H2Priority
 
 	// RemoteAddr allows HTTP servers and other software to record
 	// the network address that sent the request, usually for
@@ -432,6 +443,9 @@ func (r *Request) Clone(ctx context.Context) *Request {
 		s2 := make([]string, len(s))
 		copy(s2, s)
 		r2.PseudoHeaderOrder = s2
+	}
+	if r.H2Priority != nil {
+		r2.H2Priority = new(*r.H2Priority)
 	}
 	r2.Form = cloneURLValues(r.Form)
 	r2.PostForm = cloneURLValues(r.PostForm)
@@ -593,6 +607,11 @@ const defaultUserAgent = "Go-http-client/1.1"
 // If Body is present, Content-Length is <= 0 and [Request.TransferEncoding]
 // hasn't been set to "identity", Write adds "Transfer-Encoding:
 // chunked" to the header. Body is closed after it is sent.
+//
+// Header values for Host, Content-Length, Transfer-Encoding,
+// and Trailer are not used; these are derived from other Request fields.
+// If the Header does not contain a User-Agent value, Write uses
+// "Go-http-client/1.1".
 func (r *Request) Write(w io.Writer) error {
 	return r.write(w, false, nil, nil, nil)
 }
@@ -633,6 +652,9 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 			err = closeErr
 		}
 	}()
+	if err := validateRequestOrder(r); err != nil {
+		return err
+	}
 
 	// Find the target host. Prefer the Host: header, but if that
 	// is not given, use the host from the request URL.
@@ -711,56 +733,63 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		return err
 	}
 
-	// Header lines
-	_, err = fmt.Fprintf(w, "Host: %s\r\n", host)
-	if err != nil {
-		return err
-	}
-	if trace != nil && trace.WroteHeaderField != nil {
-		trace.WroteHeaderField("Host", []string{host})
-	}
-
-	// Use the defaultUserAgent unless the Header contains one, which
-	// may be blank to not send the header.
-	userAgent := defaultUserAgent
-	if r.Header.has("User-Agent") {
-		userAgent = r.Header.Get("User-Agent")
-	}
-	if userAgent != "" {
-		userAgent = headerNewlineToSpace.Replace(userAgent)
-		userAgent = textproto.TrimString(userAgent)
-		_, err = fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent)
+	var tw *transferWriter
+	if order := resolveOrder(r.HeaderOrder, headerOrder); order != nil {
+		tw, err = newTransferWriter(r)
+		if err != nil {
+			return err
+		}
+		if err := r.writeOrderedHeaders(w, tw, host, extraHeaders, order, trace); err != nil {
+			return err
+		}
+	} else {
+		// Header lines
+		_, err = fmt.Fprintf(w, "Host: %s\r\n", host)
 		if err != nil {
 			return err
 		}
 		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField("User-Agent", []string{userAgent})
+			trace.WroteHeaderField("Host", []string{host})
 		}
-	}
 
-	// Process Body,ContentLength,Close,Trailer
-	tw, err := newTransferWriter(r)
-	if err != nil {
-		return err
-	}
-	err = tw.writeHeader(w, trace)
-	if err != nil {
-		return err
-	}
+		// Use the defaultUserAgent unless the Header contains one, which
+		// may be blank to not send the header.
+		userAgent := defaultUserAgent
+		if r.Header.has("User-Agent") {
+			userAgent = r.Header.Get("User-Agent")
+		}
+		if userAgent != "" {
+			userAgent = headerNewlineToSpace.Replace(userAgent)
+			userAgent = textproto.TrimString(userAgent)
+			_, err = fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent)
+			if err != nil {
+				return err
+			}
+			if trace != nil && trace.WroteHeaderField != nil {
+				trace.WroteHeaderField("User-Agent", []string{userAgent})
+			}
+		}
 
-	if order := resolveOrder(r.HeaderOrder, headerOrder); order != nil {
-		err = r.Header.writeSubsetOrdered(w, reqWriteExcludeHeader, order, trace)
-	} else {
-		err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)
-	}
-	if err != nil {
-		return err
-	}
-
-	if extraHeaders != nil {
-		err = extraHeaders.write(w, trace)
+		// Process Body,ContentLength,Close,Trailer
+		tw, err = newTransferWriter(r)
 		if err != nil {
 			return err
+		}
+		err = tw.writeHeader(w, trace)
+		if err != nil {
+			return err
+		}
+
+		err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)
+		if err != nil {
+			return err
+		}
+
+		if extraHeaders != nil {
+			err = extraHeaders.write(w, trace)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -819,15 +848,11 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 type requestBodyReadError struct{ error }
 
 func idnaASCII(v string) (string, error) {
-	// TODO: Consider removing this check after verifying performance is okay.
-	// Right now punycode verification, length checks, context checks, and the
-	// permissible character tests are all omitted. It also prevents the ToASCII
-	// call from salvaging an invalid IDN, when possible. As a result it may be
-	// possible to have two IDNs that appear identical to the user where the
-	// ASCII-only version causes an error downstream whereas the non-ASCII
-	// version does not.
-	// Note that for correct ASCII IDNs ToASCII will only do considerably more
-	// work, but it will not cause an allocation.
+	// TODO: Follow the WHATWG URL Specification.
+	//
+	// WHATWG accepts all ASCII-only names (although sometimes with advisory
+	// validation errors), so skipping the relatively expensive IDNA processing
+	// on them is fine.
 	if ascii.Is(v) {
 		return v, nil
 	}
@@ -948,7 +973,7 @@ func NewRequestWithContext(ctx context.Context, method, url string, body io.Read
 		rc = io.NopCloser(body)
 	}
 	// The host's colon:port should be normalized. See Issue 14836.
-	u.Host = removeEmptyPort(u.Host)
+	u.Host = strings.TrimSuffix(u.Host, ":")
 	req := &Request{
 		ctx:        ctx,
 		Method:     method,
@@ -1028,8 +1053,6 @@ func (r *Request) BasicAuth() (username, password string, ok bool) {
 //
 // Do not remove or change the type signature.
 // See go.dev/issue/67401.
-//
-//go:linkname parseBasicAuth
 func parseBasicAuth(auth string) (username, password string, ok bool) {
 	const prefix = "Basic "
 	// Case insensitive prefix match. See Issue 22736.
@@ -1105,6 +1128,11 @@ func ReadRequest(b *bufio.Reader) (*Request, error) {
 	return req, nil
 }
 
+// readMIMEHeader uses the bounded parser copied from net/textproto.
+func readMIMEHeader(r *textproto.Reader, maxMemory, maxHeaders int64) (textproto.MIMEHeader, error) {
+	return headerparse.ReadMIMEHeader(r.R, maxMemory, maxHeaders)
+}
+
 // readRequest should be an internal detail,
 // but widely used packages access it using linkname.
 // Notable members of the hall of shame include:
@@ -1114,9 +1142,11 @@ func ReadRequest(b *bufio.Reader) (*Request, error) {
 //
 // Do not remove or change the type signature.
 // See go.dev/issue/67401.
-//
-//go:linkname readRequest
 func readRequest(b *bufio.Reader) (req *Request, err error) {
+	return readRequestLimit(b, math.MaxInt64)
+}
+
+func readRequestLimit(b *bufio.Reader, maxHeaders int64) (req *Request, err error) {
 	tp := newTextprotoReader(b)
 	defer putTextprotoReader(tp)
 
@@ -1170,8 +1200,12 @@ func readRequest(b *bufio.Reader) (req *Request, err error) {
 	}
 
 	// Subsequent lines: Key: value.
-	mimeHeader, err := tp.ReadMIMEHeader()
+	mimeHeader, err := readMIMEHeader(tp, math.MaxInt64, maxHeaders)
 	if err != nil {
+		// TODO: Add a distinguishable error to net/textproto.
+		if err.Error() == "message too large" {
+			return nil, errTooLarge
+		}
 		return nil, err
 	}
 	req.Header = Header(mimeHeader)
@@ -1195,7 +1229,7 @@ func readRequest(b *bufio.Reader) (req *Request, err error) {
 
 	req.Close = shouldClose(req.ProtoMajor, req.ProtoMinor, req.Header, false)
 
-	err = readTransfer(req, b)
+	err = readTransfer(req, b, maxHeaders)
 	if err != nil {
 		return nil, err
 	}
@@ -1506,6 +1540,9 @@ func (r *Request) FormFile(key string) (multipart.File, *multipart.FileHeader, e
 // that matched the request.
 // It returns the empty string if the request was not matched against a pattern
 // or there is no such wildcard in the pattern.
+//
+// The value is unescaped. For example, if the pattern "/b/{bucket}" matches
+// the path "/b/a%2fb", PathValue("bucket") returns "a/b".
 func (r *Request) PathValue(name string) string {
 	if i := r.patIndex(name); i >= 0 {
 		return r.matches[i]
@@ -1515,6 +1552,7 @@ func (r *Request) PathValue(name string) string {
 
 // SetPathValue sets name to value, so that subsequent calls to r.PathValue(name)
 // return value.
+// It does not unescape value.
 func (r *Request) SetPathValue(name, value string) {
 	if i := r.patIndex(name); i >= 0 {
 		r.matches[i] = value
@@ -1574,7 +1612,7 @@ func (r *Request) closeBody() error {
 func (r *Request) isReplayable() bool {
 	if r.Body == nil || r.Body == NoBody || r.GetBody != nil {
 		switch valueOrDefault(r.Method, "GET") {
-		case "GET", "HEAD", "OPTIONS", "TRACE":
+		case "GET", "HEAD", "OPTIONS", "TRACE", "QUERY":
 			return true
 		}
 		// The Idempotency-Key, while non-standard, is widely used to

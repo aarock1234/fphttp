@@ -12,13 +12,14 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"net"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/aarock1234/fphttp"
 )
 
 // Request returns the HTTP request as represented in the current

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:generate bundle -o=h2_bundle.go -prefix=http2 -tags=!nethttpomithttp2 -import=golang.org/x/net/internal/httpcommon=net/http/internal/httpcommon golang.org/x/net/http2
-
 package http
 
 import (
@@ -24,7 +22,7 @@ import (
 //   - HTTP1 is the HTTP/1.0 and HTTP/1.1 protocols.
 //     HTTP1 is supported on both unsecured TCP and secured TLS connections.
 //
-//   - HTTP2 is the HTTP/2 protcol over a TLS connection.
+//   - HTTP2 is the HTTP/2 protocol over a TLS connection.
 //
 //   - UnencryptedHTTP2 is the HTTP/2 protocol over an unsecured TCP connection.
 type Protocols struct {
@@ -35,6 +33,7 @@ const (
 	protoHTTP1 = 1 << iota
 	protoHTTP2
 	protoUnencryptedHTTP2
+	protoHTTP3
 )
 
 // HTTP1 reports whether p includes HTTP/1.
@@ -55,12 +54,23 @@ func (p Protocols) UnencryptedHTTP2() bool { return p.bits&protoUnencryptedHTTP2
 // SetUnencryptedHTTP2 adds or removes unencrypted HTTP/2 from p.
 func (p *Protocols) SetUnencryptedHTTP2(ok bool) { p.setBit(protoUnencryptedHTTP2, ok) }
 
+// http3 reports whether p includes HTTP/3.
+func (p Protocols) http3() bool { return p.bits&protoHTTP3 != 0 }
+
+// setHTTP3 adds or removes HTTP/3 from p.
+func (p *Protocols) setHTTP3(ok bool) { p.setBit(protoHTTP3, ok) }
+
 func (p *Protocols) setBit(bit uint8, ok bool) {
 	if ok {
 		p.bits |= bit
 	} else {
 		p.bits &^= bit
 	}
+}
+
+// empty returns true if p has no protocol set at all.
+func (p Protocols) empty() bool {
+	return p.bits == 0
 }
 
 func (p Protocols) String() string {
@@ -73,6 +83,9 @@ func (p Protocols) String() string {
 	}
 	if p.UnencryptedHTTP2() {
 		s = append(s, "UnencryptedHTTP2")
+	}
+	if p.http3() {
+		s = append(s, "HTTP3")
 	}
 	return "{" + strings.Join(s, ",") + "}"
 }
@@ -90,11 +103,6 @@ const maxInt64 = 1<<63 - 1
 // immediate cancellation of network operations.
 var aLongTimeAgo = time.Unix(1, 0)
 
-// omitBundledHTTP2 is set by omithttp2.go when the nethttpomithttp2
-// build tag is set. That means h2_bundle.go isn't compiled in and we
-// shouldn't try to use it.
-var omitBundledHTTP2 bool
-
 // TODO(bradfitz): move common stuff here. The other files have accumulated
 // generic http stuff in random places.
 
@@ -105,19 +113,6 @@ type contextKey struct {
 }
 
 func (k *contextKey) String() string { return "net/http context value " + k.name }
-
-// Given a string of the form "host", "host:port", or "[ipv6::address]:port",
-// return true if the string includes a port.
-func hasPort(s string) bool { return strings.LastIndex(s, ":") > strings.LastIndex(s, "]") }
-
-// removeEmptyPort strips the empty port in ":port" to ""
-// as mandated by RFC 3986 Section 6.2.3.
-func removeEmptyPort(host string) string {
-	if hasPort(host) {
-		return strings.TrimSuffix(host, ":")
-	}
-	return host
-}
 
 // isToken reports whether v is a valid token (https://www.rfc-editor.org/rfc/rfc2616#section-2.2).
 func isToken(v string) bool {

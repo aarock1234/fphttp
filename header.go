@@ -189,11 +189,17 @@ func (h Header) WriteSubset(w io.Writer, exclude map[string]bool) error {
 }
 
 func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptrace.ClientTrace) error {
+	kvs, sorter := h.sortedKeyValues(exclude)
+	defer headerSorterPool.Put(sorter)
+
+	return writeHeaderKeyValues(w, kvs, trace)
+}
+
+func writeHeaderKeyValues(w io.Writer, kvs []keyValues, trace *httptrace.ClientTrace) error {
 	ws, ok := w.(io.StringWriter)
 	if !ok {
 		ws = stringWriter{w}
 	}
-	kvs, sorter := h.sortedKeyValues(exclude)
 	var formattedVals []string
 	for _, kv := range kvs {
 		if !httpguts.ValidHeaderFieldName(kv.key) {
@@ -208,7 +214,6 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 			v = textproto.TrimString(v)
 			for _, s := range []string{kv.key, ": ", v, "\r\n"} {
 				if _, err := ws.WriteString(s); err != nil {
-					headerSorterPool.Put(sorter)
 					return err
 				}
 			}
@@ -221,90 +226,35 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 			formattedVals = nil
 		}
 	}
-	headerSorterPool.Put(sorter)
+
 	return nil
 }
 
-// writeSubsetOrdered writes headers in the order specified by order.
-// Headers present in h but not listed in order are appended in sorted
-// order after the ordered headers. Keys in exclude are always skipped.
+// writeSubsetOrdered writes configured fields first, followed by remaining
+// fields in lexical order. Values retain their order within each field.
 func (h Header) writeSubsetOrdered(w io.Writer, exclude map[string]bool, order []string, trace *httptrace.ClientTrace) error {
-	ws, ok := w.(io.StringWriter)
-	if !ok {
-		ws = stringWriter{w}
-	}
-
-	written := make(map[string]bool, len(order))
-	var formattedVals []string
-
-	// First pass: write headers in the specified order.
-	for _, key := range order {
-		if exclude[key] || written[key] {
-			continue
-		}
-		vv, exists := h[key]
-		if !exists {
-			continue
-		}
-		written[key] = true
-
-		if !httpguts.ValidHeaderFieldName(key) {
-			continue
-		}
-
-		for _, v := range vv {
-			v = headerNewlineToSpace.Replace(v)
-			v = textproto.TrimString(v)
-			for _, s := range []string{key, ": ", v, "\r\n"} {
-				if _, err := ws.WriteString(s); err != nil {
-					return err
-				}
-			}
-			if trace != nil && trace.WroteHeaderField != nil {
-				formattedVals = append(formattedVals, v)
-			}
-		}
-
-		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField(key, formattedVals)
-			formattedVals = nil
-		}
-	}
-
-	// Second pass: write remaining headers in sorted order.
 	kvs, sorter := h.sortedKeyValues(exclude)
-	for _, kv := range kvs {
-		if written[kv.key] {
-			continue
-		}
+	defer headerSorterPool.Put(sorter)
 
-		if !httpguts.ValidHeaderFieldName(kv.key) {
-			continue
-		}
-
-		for _, v := range kv.values {
-			v = headerNewlineToSpace.Replace(v)
-			v = textproto.TrimString(v)
-			for _, s := range []string{kv.key, ": ", v, "\r\n"} {
-				if _, err := ws.WriteString(s); err != nil {
-					headerSorterPool.Put(sorter)
-					return err
-				}
-			}
-			if trace != nil && trace.WroteHeaderField != nil {
-				formattedVals = append(formattedVals, v)
-			}
-		}
-
-		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField(kv.key, formattedVals)
-			formattedVals = nil
-		}
+	ranks := make(map[string]int, len(order))
+	for index, name := range order {
+		ranks[name] = index + 1
 	}
 
-	headerSorterPool.Put(sorter)
+	slices.SortStableFunc(kvs, func(a, b keyValues) int {
+		aRank := ranks[a.key]
+		bRank := ranks[b.key]
+		if aRank == 0 {
+			aRank = len(order) + 1
+		}
+		if bRank == 0 {
+			bRank = len(order) + 1
+		}
 
-	return nil
+		return aRank - bRank
+	})
+
+	return writeHeaderKeyValues(w, kvs, trace)
 }
 
 // CanonicalHeaderKey returns the canonical format of the

@@ -10,7 +10,6 @@ import (
 	"expvar"
 	"flag"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"log"
 	"os"
@@ -18,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/aarock1234/fphttp"
 )
 
 // hello world, the web server

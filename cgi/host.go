@@ -17,7 +17,6 @@ package cgi
 import (
 	"bufio"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"log"
 	"net"
@@ -31,6 +30,8 @@ import (
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
+
+	"github.com/aarock1234/fphttp"
 )
 
 var trailingPort = regexp.MustCompile(`:([0-9]+)$`)

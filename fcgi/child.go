@@ -10,13 +10,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"net"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/aarock1234/fphttp"
 	"github.com/aarock1234/fphttp/cgi"
 )
 

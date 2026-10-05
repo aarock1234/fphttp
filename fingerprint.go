@@ -1,279 +1,171 @@
 package http
 
 import (
+	"crypto/tls"
 	"errors"
-	"fmt"
 	"slices"
 
 	utls "github.com/refraction-networking/utls"
+
+	"github.com/aarock1234/fphttp/internal/fingerprint"
 )
 
 // H2SettingID identifies an HTTP/2 SETTINGS parameter.
-type H2SettingID uint16
+type H2SettingID = fingerprint.SettingID
 
 // Common HTTP/2 setting IDs.
 const (
-	H2SettingHeaderTableSize       H2SettingID = 0x1
-	H2SettingEnablePush            H2SettingID = 0x2
-	H2SettingMaxConcurrentStreams  H2SettingID = 0x3
-	H2SettingInitialWindowSize     H2SettingID = 0x4
-	H2SettingMaxFrameSize          H2SettingID = 0x5
-	H2SettingMaxHeaderListSize     H2SettingID = 0x6
-	H2SettingEnableConnectProtocol H2SettingID = 0x8
+	H2SettingHeaderTableSize       = fingerprint.SettingHeaderTableSize
+	H2SettingEnablePush            = fingerprint.SettingEnablePush
+	H2SettingMaxConcurrentStreams  = fingerprint.SettingMaxConcurrentStreams
+	H2SettingInitialWindowSize     = fingerprint.SettingInitialWindowSize
+	H2SettingMaxFrameSize          = fingerprint.SettingMaxFrameSize
+	H2SettingMaxHeaderListSize     = fingerprint.SettingMaxHeaderListSize
+	H2SettingEnableConnectProtocol = fingerprint.SettingEnableConnectProtocol
+	H2SettingNoRFC7540Priorities   = fingerprint.SettingNoRFC7540Priorities
 )
 
-// String returns the human-readable name of the setting ID.
-func (id H2SettingID) String() string {
-	switch id {
-	case H2SettingHeaderTableSize:
-		return "HEADER_TABLE_SIZE"
-	case H2SettingEnablePush:
-		return "ENABLE_PUSH"
-	case H2SettingMaxConcurrentStreams:
-		return "MAX_CONCURRENT_STREAMS"
-	case H2SettingInitialWindowSize:
-		return "INITIAL_WINDOW_SIZE"
-	case H2SettingMaxFrameSize:
-		return "MAX_FRAME_SIZE"
-	case H2SettingMaxHeaderListSize:
-		return "MAX_HEADER_LIST_SIZE"
-	case H2SettingEnableConnectProtocol:
-		return "ENABLE_CONNECT_PROTOCOL"
-	default:
-		return fmt.Sprintf("UNKNOWN(0x%x)", uint16(id))
-	}
-}
+// H2Setting is an ordered HTTP/2 SETTINGS parameter.
+type H2Setting = fingerprint.Setting
 
-// H2Setting is an HTTP/2 SETTINGS parameter (ID and value pair).
-// The order of settings in a slice is preserved when writing the
-// SETTINGS frame during connection initialization.
-type H2Setting struct {
-	ID  H2SettingID
-	Val uint32
-}
+// H2Priority is the optional priority signal in a HEADERS frame.
+// Weight is the wire value, from 0 to 255, representing weights 1 to 256.
+type H2Priority = fingerprint.Priority
 
-// H2Priority is the priority signal sent with HTTP/2 HEADERS frames.
-// Priority is only emitted when Enabled is true; the zero value emits
-// no priority, matching stdlib behavior.
-type H2Priority struct {
-	Enabled   bool
-	StreamDep uint32
-	Exclusive bool
-	Weight    uint8
-}
+// H2PriorityFrame is a standalone PRIORITY frame sent during initialization.
+type H2PriorityFrame = fingerprint.PriorityFrame
 
-// H2PriorityFrame is a standalone PRIORITY frame sent during HTTP/2
-// connection initialization. Browsers like Firefox send these for
-// placeholder streams to establish a dependency tree. This is part
-// of the Akamai HTTP/2 fingerprint.
-type H2PriorityFrame struct {
-	StreamID  uint32
-	StreamDep uint32
-	Exclusive bool
-	Weight    uint8
-}
+// H2Fingerprint configures the initial HTTP/2 connection frames.
+type H2Fingerprint = fingerprint.HTTP2
 
-// H2Fingerprint configures HTTP/2 connection-level fingerprint parameters.
-type H2Fingerprint struct {
-	// Settings are the HTTP/2 SETTINGS frame values sent during
-	// connection initialization. The order of entries is preserved
-	// on the wire. If nil, standard Go defaults are used.
-	Settings []H2Setting
-
-	// ConnectionFlow is the connection-level window size increment
-	// sent via WINDOW_UPDATE after the initial SETTINGS frame.
-	// Zero means no override; the standard Go default is used.
-	ConnectionFlow uint32
-
-	// InitPriorityFrames are standalone PRIORITY frames sent during
-	// connection initialization, after the SETTINGS and WINDOW_UPDATE
-	// frames. Browsers like Firefox use these to establish a dependency
-	// tree for placeholder streams. The frames are written in order.
-	// If nil, no PRIORITY frames are sent during initialization.
-	InitPriorityFrames []H2PriorityFrame
-
-	// HeaderPriority is the PRIORITY information included in
-	// HEADERS frames. The zero value emits no priority; set
-	// HeaderPriority.Enabled to true to include it.
-	HeaderPriority H2Priority
-}
-
-// Fingerprint configures TLS and HTTP/2 fingerprinting on a Transport.
-// A nil Fingerprint on a Transport means standard Go behavior with no
-// fingerprint modifications.
-//
-// Fingerprint must not be modified after assignment to a Transport.
-// Use Clone to obtain a safely mutable copy.
+// Fingerprint configures TLS, HTTP/2, and request header ordering.
+// A nil fingerprint uses Go's TLS and HTTP defaults.
+// A fingerprint must not be modified after the transport starts using it.
 type Fingerprint struct {
-	// ClientHelloID selects the uTLS ClientHello fingerprint for
-	// TLS connections. When set, the Transport uses uTLS instead
-	// of crypto/tls for the TLS handshake.
-	//
-	// When ClientHelloSpec is also set, ClientHelloSpec takes
-	// precedence and ClientHelloID is ignored except that it is
-	// still passed to uTLS as a label.
+	// ClientHelloID selects a uTLS preset. Its zero value uses crypto/tls.
 	ClientHelloID utls.ClientHelloID
 
-	// ClientHelloSpec, when non-nil, provides a fully customized
-	// ClientHello message that overrides ClientHelloID. Use this
-	// to mimic browser versions uTLS does not ship with a preset
-	// for, or to match JA3/JA4 strings exactly.
-	//
-	// When ClientHelloSpec is set, ClientHelloID should be set to
-	// utls.HelloCustom so uTLS marks the handshake as custom.
+	// ClientHelloSpec provides a custom template. Supported extensions are
+	// copied for every connection, including their mutable slices.
+	// Stateful or third-party extensions require ClientHelloSpecFactory.
+	// A custom spec automatically selects utls.HelloCustom.
 	ClientHelloSpec *utls.ClientHelloSpec
 
-	// HeaderOrder specifies the order in which HTTP/1.1 headers
-	// are written on the wire. Keys should be in canonical form
-	// (e.g. "Content-Type", not "content-type"). Headers present
-	// in the request but absent from this list are appended in
-	// sorted order after the ordered headers.
-	//
-	// For HTTP/2, headers are lowercased automatically; this
-	// controls the iteration order of regular (non-pseudo) headers.
-	//
-	// A nil value means headers are written in sorted order
-	// (the standard Go default).
+	// ClientHelloSpecFactory constructs a fresh custom spec for each handshake.
+	// It may be called concurrently and must return independently owned
+	// extensions and slices. It cannot be combined with ClientHelloSpec or
+	// a named ClientHelloID preset.
+	ClientHelloSpecFactory func() (*utls.ClientHelloSpec, error)
+
+	// ClientSessionCache enables uTLS session resumption. The cache must be
+	// safe for concurrent use; utls.NewLRUClientSessionCache is suitable.
+	// A nil cache disables resumption.
+	ClientSessionCache utls.ClientSessionCache
+
+	// GetClientCertificate selects a client certificate using uTLS's request
+	// type, which preserves the handshake context. It may be called concurrently.
+	// Static Certificates in Transport.TLSClientConfig remain supported.
+	GetClientCertificate func(*utls.CertificateRequestInfo) (*utls.Certificate, error)
+
+	// HeaderOrder specifies canonical HTTP header names in wire order.
+	// Remaining headers follow in sorted order. An explicitly empty request
+	// order disables the fingerprint's order for that request.
 	HeaderOrder []string
 
-	// PseudoHeaderOrder specifies the order of HTTP/2 pseudo-headers
-	// (:method, :authority, :scheme, :path). All four must be present
-	// for a non-CONNECT request. If nil, the standard Go order is
-	// used (:authority, :method, :path, :scheme).
+	// PseudoHeaderOrder specifies all four HTTP/2 request pseudo-headers.
+	// A nil or empty order uses Go's order: authority, method, path, scheme.
 	PseudoHeaderOrder []string
 
-	// H2 configures HTTP/2 connection parameters for fingerprinting.
+	// H2 configures HTTP/2 connection fingerprinting.
 	H2 H2Fingerprint
 }
 
-// Clone returns a deep copy of f or nil if f is nil. The embedded
-// ClientHelloSpec pointer is shared, not deep-copied; callers must
-// not mutate a spec in place after cloning.
+// Clone copies the fingerprint's slices. The custom spec template, factory,
+// and session cache are shared and must be immutable or concurrency-safe.
+// The template is separately copied before each handshake.
 func (f *Fingerprint) Clone() *Fingerprint {
 	if f == nil {
 		return nil
 	}
 
-	f2 := *f
-	f2.HeaderOrder = slices.Clone(f.HeaderOrder)
-	f2.PseudoHeaderOrder = slices.Clone(f.PseudoHeaderOrder)
-	f2.H2.Settings = slices.Clone(f.H2.Settings)
-	f2.H2.InitPriorityFrames = slices.Clone(f.H2.InitPriorityFrames)
+	clone := *f
+	clone.HeaderOrder = slices.Clone(f.HeaderOrder)
+	clone.PseudoHeaderOrder = slices.Clone(f.PseudoHeaderOrder)
+	clone.H2.Settings = slices.Clone(f.H2.Settings)
+	clone.H2.InitPriorityFrames = slices.Clone(f.H2.InitPriorityFrames)
 
-	return &f2
+	return &clone
 }
 
-// Validate checks f for common misconfigurations. It returns all
-// problems found joined via errors.Join, or nil if f is valid.
-// A nil Fingerprint is always valid.
+// Validate returns all configuration problems joined with errors.Join.
+// Transports also validate their fingerprint before sending requests.
 func (f *Fingerprint) Validate() error {
 	if f == nil {
 		return nil
 	}
 
 	return errors.Join(
-		f.validatePseudoHeaderOrder(),
-		f.validateSettings(),
-		f.validateInitPriorityFrames(),
-		f.validateHeaderOrder(),
+		f.validateClientHello(),
+		fingerprint.ValidateHeaderOrder(f.HeaderOrder),
+		fingerprint.ValidatePseudoHeaderOrder(f.PseudoHeaderOrder),
+		f.H2.Validate(),
 	)
 }
 
-// validatePseudoHeaderOrder checks that PseudoHeaderOrder, if set,
-// contains exactly the four required pseudo-headers with no duplicates.
-func (f *Fingerprint) validatePseudoHeaderOrder() error {
-	if f.PseudoHeaderOrder == nil {
+func (f *Fingerprint) validateClientHello() error {
+	custom := f.ClientHelloSpec != nil || f.ClientHelloSpecFactory != nil
+	namedPreset := f.ClientHelloID.IsSet() && f.ClientHelloID != utls.HelloCustom
+	if custom && namedPreset {
+		return errors.New("fphttp: a custom ClientHello cannot be combined with a named preset")
+	}
+	if f.ClientHelloSpec != nil && f.ClientHelloSpecFactory != nil {
+		return errors.New("fphttp: use either ClientHelloSpec or ClientHelloSpecFactory")
+	}
+	if f.ClientHelloSpec != nil {
+		_, err := cloneClientHelloSpec(f.ClientHelloSpec)
+
+		return err
+	}
+	if f.ClientHelloID == utls.HelloCustom && f.ClientHelloSpecFactory == nil {
+		return errors.New("fphttp: HelloCustom requires ClientHelloSpec or ClientHelloSpecFactory")
+	}
+
+	return nil
+}
+
+func (f *Fingerprint) hasTLSFingerprint() bool {
+	return f != nil && (f.ClientHelloID.IsSet() || f.ClientHelloSpec != nil || f.ClientHelloSpecFactory != nil)
+}
+
+func resolveOrder(request, fallback []string) []string {
+	return fingerprint.ResolveOrder(request, fallback)
+}
+
+func validateRequestOrder(request *Request) error {
+	var priorityError error
+	if request.H2Priority != nil {
+		priorityError = request.H2Priority.Validate(0)
+	}
+
+	return errors.Join(
+		priorityError,
+		fingerprint.ValidateHeaderOrder(request.HeaderOrder),
+		fingerprint.ValidatePseudoHeaderOrder(request.PseudoHeaderOrder),
+	)
+}
+
+func (f *Fingerprint) validateTLSConfig(config *tls.Config) error {
+	if !f.hasTLSFingerprint() || config == nil {
 		return nil
 	}
 
-	required := map[string]bool{
-		":method":    true,
-		":authority": true,
-		":scheme":    true,
-		":path":      true,
+	var problems []error
+	if config.ClientSessionCache != nil && f.ClientSessionCache == nil {
+		problems = append(problems, errors.New("fphttp: use Fingerprint.ClientSessionCache for uTLS session resumption"))
 	}
-	seen := make(map[string]bool, len(required))
-	for _, p := range f.PseudoHeaderOrder {
-		if !required[p] {
-			return fmt.Errorf("fphttp: PseudoHeaderOrder contains invalid pseudo-header %q", p)
-		}
-		if seen[p] {
-			return fmt.Errorf("fphttp: PseudoHeaderOrder contains duplicate %q", p)
-		}
-		seen[p] = true
+	if config.GetClientCertificate != nil && f.GetClientCertificate == nil {
+		problems = append(problems, errors.New("fphttp: use Fingerprint.GetClientCertificate to preserve the uTLS handshake context"))
 	}
 
-	for p := range required {
-		if !seen[p] {
-			return fmt.Errorf("fphttp: PseudoHeaderOrder missing required pseudo-header %q", p)
-		}
-	}
-
-	return nil
-}
-
-// validateSettings checks that H2.Settings has no duplicate setting IDs.
-func (f *Fingerprint) validateSettings() error {
-	if len(f.H2.Settings) == 0 {
-		return nil
-	}
-
-	seen := make(map[H2SettingID]bool, len(f.H2.Settings))
-	for _, s := range f.H2.Settings {
-		if seen[s.ID] {
-			return fmt.Errorf("fphttp: duplicate H2 setting ID %v", s.ID)
-		}
-		seen[s.ID] = true
-	}
-
-	return nil
-}
-
-// validateInitPriorityFrames checks that InitPriorityFrames entries
-// have non-zero stream IDs (stream 0 is the connection, not a valid
-// PRIORITY target).
-func (f *Fingerprint) validateInitPriorityFrames() error {
-	for i, pf := range f.H2.InitPriorityFrames {
-		if pf.StreamID == 0 {
-			return fmt.Errorf("fphttp: InitPriorityFrames[%d] has StreamID 0", i)
-		}
-	}
-
-	return nil
-}
-
-// validateHeaderOrder checks that HeaderOrder keys are in canonical
-// HTTP/1.1 form (e.g. "Content-Type", not "content-type").
-func (f *Fingerprint) validateHeaderOrder() error {
-	for _, key := range f.HeaderOrder {
-		if canonical := CanonicalHeaderKey(key); canonical != key {
-			return fmt.Errorf("fphttp: HeaderOrder key %q is not canonical, use %q", key, canonical)
-		}
-	}
-
-	return nil
-}
-
-// resolveOrder returns perReq if non-nil, else fallback. It is the
-// per-request-overrides-fingerprint-default pattern used by the H1
-// and H2 write paths.
-func resolveOrder(perReq, fallback []string) []string {
-	if perReq != nil {
-		return perReq
-	}
-
-	return fallback
-}
-
-// settingValue returns the value of the first setting matching id, and
-// whether such a setting exists. Validate rejects duplicate IDs, so the
-// "first match" semantics are unambiguous in practice.
-func (h H2Fingerprint) settingValue(id H2SettingID) (uint32, bool) {
-	for _, s := range h.Settings {
-		if s.ID == id {
-			return s.Val, true
-		}
-	}
-
-	return 0, false
+	return errors.Join(problems...)
 }

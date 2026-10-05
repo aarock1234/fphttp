@@ -7,11 +7,12 @@ package httputil
 import (
 	"bufio"
 	"errors"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"net"
 	"net/textproto"
 	"sync"
+
+	"github.com/aarock1234/fphttp"
 )
 
 var (

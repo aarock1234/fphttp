@@ -37,3 +37,17 @@ go.work.sum
 
 # macOS
 .DS_Store
+
+# Local browser captures and upstream review data
+.temp-data/
+
+# Local review notes
+/docs/
+
+# Publish the root README; keep other Markdown local.
+*.md
+*.markdown
+*.mdown
+*.mkd
+*.mdx
+!/README.md

@@ -10,14 +10,12 @@ package godebug
 
 import (
 	"os"
-	"sync"
+	"strings"
 )
 
 // A Setting is a single setting in the $GODEBUG environment variable.
 type Setting struct {
 	name string
-	once sync.Once
-	val  string
 }
 
 // New returns a new Setting for the $GODEBUG setting with the given name.
@@ -46,11 +44,7 @@ func (s *Setting) String() string {
 
 // Value returns the current value for the GODEBUG setting s.
 func (s *Setting) Value() string {
-	s.once.Do(func() {
-		s.val = lookup(s.Name())
-	})
-
-	return s.val
+	return lookup(s.Name())
 }
 
 // IncNonDefault is a no-op in this fork. In the standard library it
@@ -61,32 +55,22 @@ func (s *Setting) IncNonDefault() {}
 // lookup parses the GODEBUG environment variable for the given key.
 func lookup(key string) string {
 	env := os.Getenv("GODEBUG")
+	var value string
 	for len(env) > 0 {
 		// Find the next key=value pair.
 		var pair string
-		if i := indexOf(env, ','); i >= 0 {
+		if i := strings.IndexByte(env, ','); i >= 0 {
 			pair, env = env[:i], env[i+1:]
 		} else {
 			pair, env = env, ""
 		}
 
-		if eq := indexOf(pair, '='); eq >= 0 {
+		if eq := strings.IndexByte(pair, '='); eq >= 0 {
 			if pair[:eq] == key {
-				return pair[eq+1:]
+				value = pair[eq+1:]
 			}
 		}
 	}
 
-	return ""
-}
-
-// indexOf returns the index of the first occurrence of b in s, or -1.
-func indexOf(s string, b byte) int {
-	for i := range len(s) {
-		if s[i] == b {
-			return i
-		}
-	}
-
-	return -1
+	return value
 }

@@ -7,13 +7,14 @@ package httptest
 import (
 	"bytes"
 	"fmt"
-	"github.com/aarock1234/fphttp"
 	"io"
 	"net/textproto"
 	"strconv"
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
+
+	"github.com/aarock1234/fphttp"
 )
 
 // ResponseRecorder is an implementation of [http.ResponseWriter] that
