@@ -7,7 +7,7 @@ Requires Go 1.27.1 or newer.
 ## Install
 
 ```sh
-go get github.com/aarock1234/fphttp@v1.3.0
+go get github.com/aarock1234/fphttp@v1.3.1
 ```
 
 ## Use a browser profile
