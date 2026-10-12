@@ -114,7 +114,7 @@ func (f *Fingerprint) Validate() error {
 
 func (f *Fingerprint) validateClientHello() error {
 	custom := f.ClientHelloSpec != nil || f.ClientHelloSpecFactory != nil
-	namedPreset := f.ClientHelloID.IsSet() && f.ClientHelloID != utls.HelloCustom
+	namedPreset := f.hasClientHelloID() && f.ClientHelloID != utls.HelloCustom
 	if custom && namedPreset {
 		return errors.New("fphttp: a custom ClientHello cannot be combined with a named preset")
 	}
@@ -134,7 +134,7 @@ func (f *Fingerprint) validateClientHello() error {
 }
 
 func (f *Fingerprint) hasTLSFingerprint() bool {
-	return f != nil && (f.ClientHelloID.IsSet() || f.ClientHelloSpec != nil || f.ClientHelloSpecFactory != nil)
+	return f != nil && (f.hasClientHelloID() || f.ClientHelloSpec != nil || f.ClientHelloSpecFactory != nil)
 }
 
 func resolveOrder(request, fallback []string) []string {
@@ -168,4 +168,10 @@ func (f *Fingerprint) validateTLSConfig(config *tls.Config) error {
 	}
 
 	return errors.Join(problems...)
+}
+
+// hasClientHelloID reports whether f selects a uTLS ClientHelloID. uTLS's
+// ClientHelloID.IsSet reports the opposite: it is true for the zero ID.
+func (f *Fingerprint) hasClientHelloID() bool {
+	return f.ClientHelloID.Client != ""
 }
