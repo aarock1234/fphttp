@@ -4,8 +4,8 @@
 
 // Package headerparse provides Go's bounded MIME header parser without
 // relying on runtime linknames. The line and header parsing functions are
-// copied from net/textproto in Go 1.27.1. Dot-encoding support is omitted
-// because HTTP headers are not dot-encoded.
+// copied from net/textproto at Go revision e60b4c37fa344513cdecfffe6efc3ca48c4a6cb2.
+// Dot-encoding support is omitted because HTTP headers are not dot-encoded.
 package headerparse
 
 import (
@@ -124,7 +124,7 @@ func (r *reader) readContinuedLineSlice(lim int64, validateFirstLine func([]byte
 		}
 		line, err := r.readLineSlice(lim - int64(len(r.buf)))
 		if err != nil {
-			break
+			return nil, err
 		}
 		r.buf = append(r.buf, trim(line)...)
 	}
@@ -149,6 +149,10 @@ func (r *reader) skipSpace() int {
 }
 
 func readMIMEHeader(r *reader, maxMemory, maxHeaders int64) (textproto.MIMEHeader, error) {
+	if maxMemory < 0 {
+		return nil, errMessageTooLarge
+	}
+
 	// Avoid lots of small slice allocations later by allocating one
 	// large one ahead of time which we'll cut up into smaller
 	// slices. If this isn't big enough later, we allocate small ones.
@@ -162,12 +166,6 @@ func readMIMEHeader(r *reader, maxMemory, maxHeaders int64) (textproto.MIMEHeade
 	}
 
 	m := make(textproto.MIMEHeader, hint)
-
-	// Account for 400 bytes of overhead for the MIMEHeader, plus 200 bytes per entry.
-	// Benchmarking map creation as of go1.20, a one-entry MIMEHeader is 416 bytes and large
-	// MIMEHeaders average about 200 bytes per entry.
-	maxMemory -= 400
-	const mapEntryOverhead = 200
 
 	// The first line cannot start with a leading space.
 	if buf, err := r.R.Peek(1); err == nil && (buf[0] == ' ' || buf[0] == '\t') {
@@ -210,6 +208,10 @@ func readMIMEHeader(r *reader, maxMemory, maxHeaders int64) (textproto.MIMEHeade
 
 		vv := m[key]
 		if vv == nil {
+			// Account for per-entry overhead.
+			// 200 bytes is based on benchmarks circa Go 1.20.
+			const mapEntryOverhead = 200
+
 			maxMemory -= int64(len(key))
 			maxMemory -= mapEntryOverhead
 		}

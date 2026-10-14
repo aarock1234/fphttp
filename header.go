@@ -189,13 +189,21 @@ func (h Header) WriteSubset(w io.Writer, exclude map[string]bool) error {
 }
 
 func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptrace.ClientTrace) error {
+	return h.writeSubsetCase(w, exclude, trace, nil)
+}
+
+func (h Header) writeSubsetCase(w io.Writer, exclude map[string]bool, trace *httptrace.ClientTrace, names map[string]string) error {
 	kvs, sorter := h.sortedKeyValues(exclude)
 	defer headerSorterPool.Put(sorter)
 
-	return writeHeaderKeyValues(w, kvs, trace)
+	return writeHeaderKeyValuesCase(w, kvs, trace, names)
 }
 
 func writeHeaderKeyValues(w io.Writer, kvs []keyValues, trace *httptrace.ClientTrace) error {
+	return writeHeaderKeyValuesCase(w, kvs, trace, nil)
+}
+
+func writeHeaderKeyValuesCase(w io.Writer, kvs []keyValues, trace *httptrace.ClientTrace, names map[string]string) error {
 	ws, ok := w.(io.StringWriter)
 	if !ok {
 		ws = stringWriter{w}
@@ -209,10 +217,11 @@ func writeHeaderKeyValues(w io.Writer, kvs []keyValues, trace *httptrace.ClientT
 			// handler, so just drop invalid headers instead.
 			continue
 		}
+		name := wireHeaderName(kv.key, names)
 		for _, v := range kv.values {
 			v = headerNewlineToSpace.Replace(v)
 			v = textproto.TrimString(v)
-			for _, s := range []string{kv.key, ": ", v, "\r\n"} {
+			for _, s := range []string{name, ": ", v, "\r\n"} {
 				if _, err := ws.WriteString(s); err != nil {
 					return err
 				}
@@ -222,7 +231,7 @@ func writeHeaderKeyValues(w io.Writer, kvs []keyValues, trace *httptrace.ClientT
 			}
 		}
 		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField(kv.key, formattedVals)
+			trace.WroteHeaderField(name, formattedVals)
 			formattedVals = nil
 		}
 	}
@@ -233,6 +242,10 @@ func writeHeaderKeyValues(w io.Writer, kvs []keyValues, trace *httptrace.ClientT
 // writeSubsetOrdered writes configured fields first, followed by remaining
 // fields in lexical order. Values retain their order within each field.
 func (h Header) writeSubsetOrdered(w io.Writer, exclude map[string]bool, order []string, trace *httptrace.ClientTrace) error {
+	return h.writeSubsetOrderedCase(w, exclude, order, trace, nil)
+}
+
+func (h Header) writeSubsetOrderedCase(w io.Writer, exclude map[string]bool, order []string, trace *httptrace.ClientTrace, names map[string]string) error {
 	kvs, sorter := h.sortedKeyValues(exclude)
 	defer headerSorterPool.Put(sorter)
 
@@ -254,7 +267,15 @@ func (h Header) writeSubsetOrdered(w io.Writer, exclude map[string]bool, order [
 		return aRank - bRank
 	})
 
-	return writeHeaderKeyValues(w, kvs, trace)
+	return writeHeaderKeyValuesCase(w, kvs, trace, names)
+}
+
+func wireHeaderName(name string, names map[string]string) string {
+	if spelling := names[CanonicalHeaderKey(name)]; spelling != "" {
+		return spelling
+	}
+
+	return name
 }
 
 // CanonicalHeaderKey returns the canonical format of the

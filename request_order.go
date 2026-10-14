@@ -39,7 +39,7 @@ func (r *Request) writeOrderedHeaders(w io.Writer, tw *transferWriter, host stri
 		headers[name] = append(headers[name], values...)
 	}
 
-	return headers.writeSubsetOrdered(w, nil, order, trace)
+	return headers.writeSubsetOrderedCase(w, nil, order, trace, r.H1HeaderCase)
 }
 
 func (t *transferWriter) addFramingHeaders(headers Header) error {

@@ -24,8 +24,8 @@ func ChromeMacFetch() *Fingerprint {
 }
 
 // Chrome154MacHTTP2 models the captured Chrome 154 macOS HTTP/2 navigation.
-// It leaves TLS to crypto/tls or the caller's DialTLSContext. The current uTLS
-// version cannot reproduce this capture's complete TLS capabilities safely.
+// It leaves TLS to crypto/tls or the caller's DialTLSContext. Use the browser
+// catalog for newer source-derived TLS capabilities and their coverage metadata.
 func Chrome154MacHTTP2() *Fingerprint {
 	profile := chromiumProfile(utls.ClientHelloID{})
 	profile.HeaderOrder = []string{

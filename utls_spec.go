@@ -74,6 +74,13 @@ func cloneClientHelloExtension(extension utls.TLSExtension) (utls.TLSExtension, 
 			Id:   source.Id,
 			Data: slices.Clone(source.Data),
 		}, nil
+	case *utls.TrustAnchorsExtension:
+		ids := make([][]byte, len(source.TrustAnchorIDs))
+		for index, id := range source.TrustAnchorIDs {
+			ids[index] = slices.Clone(id)
+		}
+
+		return &utls.TrustAnchorsExtension{TrustAnchorIDs: ids}, nil
 	case *utls.UtlsGREASEExtension:
 		return &utls.UtlsGREASEExtension{
 			Value: source.Value,

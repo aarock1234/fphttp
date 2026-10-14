@@ -129,6 +129,8 @@ func (t *unencryptedTransport) RoundTrip(req *ClientRequest) (*ClientResponse, e
 // ClientConn is the state of a single HTTP/2 client connection to an
 // HTTP/2 server.
 type ClientConn struct {
+	// fingerprint is resolved once for this connection, including SETTINGS GREASE.
+	fingerprint   *fingerprint.Config
 	t             *Transport
 	tconn         net.Conn             // usually *tls.Conn, except specialized impls
 	tlsState      *tls.ConnectionState // nil only for specialized impls
@@ -143,11 +145,11 @@ type ClientConn struct {
 	idleTimeout time.Duration // or 0 for never
 	idleTimer   *time.Timer
 
-	mu               sync.Mutex // guards following
-	cond             *sync.Cond // hold mu; broadcast on flow/closed changes
-	flow             outflow    // our conn-level flow control quota (cs.outflow is per stream)
-	inflow           inflow     // peer's conn-level flow control
-	doNotReuse       bool       // whether conn is marked to not be reused for any future requests
+	mu               sync.Mutex  // guards following
+	cond             *sync.Cond  // hold mu; broadcast on flow/closed changes
+	flow             connOutflow // our conn-level flow control quota (cs.outflow is per stream)
+	inflow           inflow      // peer's conn-level flow control
+	doNotReuse       bool        // whether conn is marked to not be reused for any future requests
 	closing          bool
 	closed           bool
 	closedOnIdle     bool                     // true if conn was closed for idleness
@@ -170,7 +172,6 @@ type ClientConn struct {
 	maxConcurrentStreams        uint32
 	peerMaxHeaderListSize       uint64
 	peerMaxHeaderTableSize      uint32
-	initialWindowSize           uint32
 	initialStreamRecvWindowSize int32
 	readIdleTimeout             time.Duration
 	pingTimeout                 time.Duration
@@ -572,14 +573,20 @@ func (t *Transport) NewClientConn(c net.Conn, internalStateHook func()) (NetHTTP
 }
 
 func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook func()) (*ClientConn, error) {
+	connectionFingerprint, err := t.fingerprint.ForConnection()
+	if err != nil {
+		_ = c.Close()
+
+		return nil, err
+	}
 	conf := configFromTransport(t)
 	cc := &ClientConn{
+		fingerprint:                 connectionFingerprint,
 		t:                           t,
 		tconn:                       c,
 		readerDone:                  make(chan struct{}),
 		nextStreamID:                1,
 		maxFrameSize:                16 << 10, // spec default
-		initialWindowSize:           65535,    // spec default
 		initialStreamRecvWindowSize: int32(conf.MaxReceiveBufferPerStream),
 		maxConcurrentStreams:        initialMaxConcurrentStreams, // "infinite", per spec. Use a smaller value until we have received server settings.
 		strictMaxConcurrentStreams:  conf.StrictMaxConcurrentRequests,
@@ -604,13 +611,13 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook 
 	}
 
 	cc.cond = sync.NewCond(&cc.mu)
-	cc.flow.add(int32(initialWindowSize))
-	if fp := t.fingerprint; fp != nil && fp.H2.InitialStreamID != 0 {
+	cc.flow.init()
+	if fp := cc.fingerprint; fp != nil && fp.H2.InitialStreamID != 0 {
 		cc.nextStreamID = fp.H2.InitialStreamID
 	}
 	cc.firstStreamID = cc.nextStreamID
 
-	if fp := t.fingerprint; fp != nil && fp.H2.Settings != nil {
+	if fp := cc.fingerprint; fp != nil && fp.H2.Settings != nil {
 		window, present := fp.H2.SettingValue(fingerprint.SettingInitialWindowSize)
 		if !present {
 			window = initialWindowSize
@@ -632,7 +639,7 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook 
 		cc.fr.countError = conf.CountError
 	}
 	maxHeaderTableSize := uint32(conf.MaxDecoderHeaderTableSize)
-	if fp := t.fingerprint; fp != nil && fp.H2.Settings != nil {
+	if fp := cc.fingerprint; fp != nil && fp.H2.Settings != nil {
 		maxHeaderTableSize = initialHeaderTableSize
 		if value, present := fp.H2.SettingValue(fingerprint.SettingHeaderTableSize); present {
 			maxHeaderTableSize = value
@@ -646,7 +653,7 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook 
 
 	cc.fr.ReadMetaHeaders = hpack.NewDecoder(maxHeaderTableSize, nil)
 	cc.fr.MaxHeaderListSize = t.maxHeaderListSize()
-	if fp := t.fingerprint; fp != nil {
+	if fp := cc.fingerprint; fp != nil {
 		if value, present := fp.H2.SettingValue(fingerprint.SettingMaxHeaderListSize); present && value != 0 {
 			if cc.fr.MaxHeaderListSize == 0 || value < cc.fr.MaxHeaderListSize {
 				cc.fr.MaxHeaderListSize = value
@@ -676,7 +683,7 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook 
 	}
 
 	connectionFlow := uint32(conf.MaxReceiveBufferPerConnection)
-	if fp := t.fingerprint; fp != nil {
+	if fp := cc.fingerprint; fp != nil {
 		if fp.H2.Settings != nil {
 			initialSettings = make([]Setting, 0, len(fp.H2.Settings))
 			for _, setting := range fp.H2.Settings {
@@ -716,7 +723,7 @@ func (cc *ClientConn) writeClientPreface(settings []Setting, connectionFlow uint
 	if err := cc.fr.WriteWindowUpdate(0, connectionFlow); err != nil {
 		return err
 	}
-	if fp := cc.t.fingerprint; fp != nil {
+	if fp := cc.fingerprint; fp != nil {
 		for _, frame := range fp.H2.InitPriorityFrames {
 			priority := PriorityParam{
 				StreamDep: frame.StreamDep,
@@ -1059,6 +1066,33 @@ func (cc *ClientConn) closeForError(err error) {
 	cc.cond.Broadcast()
 	cc.mu.Unlock()
 	cc.closeConn()
+}
+
+func (cc *ClientConn) goAwayAndClose(code ErrCode) {
+	cc.mu.Lock()
+	closed := cc.closed
+	cc.closing = true
+	cc.closed = true
+	cc.mu.Unlock()
+	if closed {
+		return
+	}
+	if f := cc.fr.countError; f != nil {
+		f(fmt.Sprintf("conn_close_error_%s", code.stringToken()))
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cc.wmu.Lock()
+		cc.fr.WriteGoAway(0, code, nil)
+		cc.bw.Flush()
+		cc.wmu.Unlock()
+	}()
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+	}
+	cc.closeForError(fmt.Errorf("http2: closing connection with %v", code))
 }
 
 // Close closes the client connection immediately.
@@ -1494,14 +1528,14 @@ func (cs *clientStream) encodeAndWriteHeaders(req *ClientRequest) error {
 	}
 
 	priority := req.H2Priority
-	if priority == nil && cc.t.fingerprint != nil {
-		priority = &cc.t.fingerprint.H2.HeaderPriority
+	if priority == nil && cc.fingerprint != nil {
+		priority = &cc.fingerprint.H2.HeaderPriority
 	}
 	if priority != nil {
 		if err := priority.Validate(cs.ID); err != nil {
 			return err
 		}
-		if fp := cc.t.fingerprint; fp != nil && priority.Enabled {
+		if fp := cc.fingerprint; fp != nil && priority.Enabled {
 			if value, _ := fp.H2.SettingValue(fingerprint.SettingNoRFC7540Priorities); value == 1 {
 				return errors.New("fphttp: HEADERS priority conflicts with NO_RFC7540_PRIORITIES = 1")
 			}
@@ -1533,14 +1567,15 @@ func (cs *clientStream) encodeAndWriteHeaders(req *ClientRequest) error {
 func (cc *ClientConn) encodeRequestHeaders(req *ClientRequest, addGzipHeader bool, headerf func(name, value string)) (httpcommon.EncodeHeadersResult, error) {
 	headerOrder := req.HeaderOrder
 	pseudoHeaderOrder := req.PseudoHeaderOrder
-	if fp := cc.t.fingerprint; fp != nil {
+	if fp := cc.fingerprint; fp != nil {
 		headerOrder = fingerprint.ResolveOrder(headerOrder, fp.HeaderOrder)
 		pseudoHeaderOrder = fingerprint.ResolveOrder(pseudoHeaderOrder, fp.PseudoHeaderOrder)
 	}
+	headers, headerOrder := requestHeadersWithPriority(req, headerOrder)
 
 	return httpcommon.EncodeHeaders(req.Context, httpcommon.EncodeHeadersParam{
 		Request: httpcommon.Request{
-			Header:              req.Header,
+			Header:              headers,
 			Trailer:             req.Trailer,
 			URL:                 req.URL,
 			Host:                req.Host,
@@ -1597,7 +1632,6 @@ func (cs *clientStream) cleanupWriteRequest(err error) {
 	if bodyClosed != nil {
 		<-bodyClosed
 	}
-
 	if err != nil && cs.sentEndStream {
 		// If the connection is closed immediately after the response is read,
 		// we may be aborted before finishing up here. If the stream was closed
@@ -1610,7 +1644,9 @@ func (cs *clientStream) cleanupWriteRequest(err error) {
 	}
 	if err != nil {
 		cs.abortStream(err) // possibly redundant, but harmless
-		if cs.sentHeaders {
+		if ce, ok := err.(ConnectionError); ok {
+			cc.goAwayAndClose(ErrCode(ce))
+		} else if cs.sentHeaders {
 			if se, ok := err.(StreamError); ok {
 				if se.Cause != errFromPeer {
 					cc.writeStreamReset(cs.ID, se.Code, false, err)
@@ -1957,8 +1993,12 @@ func (cs *clientStream) awaitFlowControl(maxBytes int) (taken int32, err error) 
 			return 0, errRequestCanceled
 		default:
 		}
-		if a := cs.flow.available(); a > 0 {
-			take := a
+		avail, ok := cs.flow.available()
+		if !ok {
+			return 0, ConnectionError(ErrCodeFlowControl)
+		}
+		if avail > 0 {
+			take := avail
 			if int(take) > maxBytes {
 
 				take = int32(maxBytes) // can't truncate int; take is int32
@@ -2019,8 +2059,7 @@ type resAndError struct {
 
 // requires cc.mu be held.
 func (cc *ClientConn) addStreamLocked(cs *clientStream) {
-	cs.flow.add(int32(cc.initialWindowSize))
-	cs.flow.setConnFlow(&cc.flow)
+	cs.flow.conn = &cc.flow
 	cs.inflow.init(cc.initialStreamRecvWindowSize)
 	cs.ID = cc.nextStreamID
 	cc.nextStreamID += 2
@@ -2794,6 +2833,10 @@ const (
 func (rl *clientConnReadLoop) streamByID(id uint32, headerOrData bool) *clientStream {
 	rl.cc.mu.Lock()
 	defer rl.cc.mu.Unlock()
+	return rl.streamByIDLocked(id, headerOrData)
+}
+
+func (rl *clientConnReadLoop) streamByIDLocked(id uint32, headerOrData bool) *clientStream {
 	if headerOrData {
 		// Work around an unfortunate gRPC behavior.
 		// See comment on ClientConn.rstStreamPingsBlocked for details.
@@ -2912,18 +2955,10 @@ func (rl *clientConnReadLoop) processSettingsNoWrite(f *SettingsFrame) error {
 		case SettingMaxHeaderListSize:
 			cc.peerMaxHeaderListSize = uint64(s.Val)
 		case SettingInitialWindowSize:
-			// Adjust flow control of currently-open
-			// frames by the difference of the old initial
-			// window size and this one.
-			delta := int32(s.Val) - int32(cc.initialWindowSize)
-			for _, cs := range cc.streams {
-				if !cs.flow.add(delta) {
-					return ConnectionError(ErrCodeFlowControl)
-				}
+			if !cc.flow.changeInitialWindowSize(int64(s.Val)) {
+				return ConnectionError(ErrCodeFlowControl)
 			}
 			cc.cond.Broadcast()
-
-			cc.initialWindowSize = s.Val
 		case SettingHeaderTableSize:
 			cc.henc.SetMaxDynamicTableSize(s.Val)
 			cc.peerMaxHeaderTableSize = s.Val
@@ -2965,29 +3000,30 @@ func (rl *clientConnReadLoop) processSettingsNoWrite(f *SettingsFrame) error {
 
 func (rl *clientConnReadLoop) processWindowUpdate(f *WindowUpdateFrame) error {
 	cc := rl.cc
-	cs := rl.streamByID(f.StreamID, notHeaderOrDataFrame)
-	if f.StreamID != 0 && cs == nil {
-		return nil
-	}
-
 	cc.mu.Lock()
 	defer cc.mu.Unlock()
-
-	fl := &cc.flow
-	if cs != nil {
-		fl = &cs.flow
-	}
-	if !fl.add(int32(f.Increment)) {
-		// For stream, the sender sends RST_STREAM with an error code of FLOW_CONTROL_ERROR
-		if cs != nil {
+	if f.StreamID == 0 {
+		if !cc.flow.add(int32(f.Increment)) {
+			return ConnectionError(ErrCodeFlowControl)
+		}
+	} else {
+		cs := rl.streamByIDLocked(f.StreamID, notHeaderOrDataFrame)
+		if cs == nil {
+			return nil
+		}
+		if !cs.flow.add(int32(f.Increment)) {
+			if cs.flow.conn.flowErr {
+				// This is a lazily-detected connection-level flow control error.
+				return ConnectionError(ErrCodeFlowControl)
+			}
+			// For stream, the sender sends RST_STREAM with
+			// an error code of FLOW_CONTROL_ERROR.
 			rl.endStreamErrorLocked(cs, StreamError{
 				StreamID: f.StreamID,
 				Code:     ErrCodeFlowControl,
 			})
 			return nil
 		}
-
-		return ConnectionError(ErrCodeFlowControl)
 	}
 	cc.cond.Broadcast()
 	return nil

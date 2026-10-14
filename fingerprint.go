@@ -3,6 +3,7 @@ package http
 import (
 	"crypto/tls"
 	"errors"
+	"maps"
 	"slices"
 
 	utls "github.com/refraction-networking/utls"
@@ -72,6 +73,10 @@ type Fingerprint struct {
 	// order disables the fingerprint's order for that request.
 	HeaderOrder []string
 
+	// H1HeaderCase maps canonical names to their HTTP/1.1 wire spelling.
+	// Values must differ only in case. HTTP/2 always uses lowercase names.
+	H1HeaderCase map[string]string
+
 	// PseudoHeaderOrder specifies all four HTTP/2 request pseudo-headers.
 	// A nil or empty order uses Go's order: authority, method, path, scheme.
 	PseudoHeaderOrder []string
@@ -90,6 +95,7 @@ func (f *Fingerprint) Clone() *Fingerprint {
 
 	clone := *f
 	clone.HeaderOrder = slices.Clone(f.HeaderOrder)
+	clone.H1HeaderCase = maps.Clone(f.H1HeaderCase)
 	clone.PseudoHeaderOrder = slices.Clone(f.PseudoHeaderOrder)
 	clone.H2.Settings = slices.Clone(f.H2.Settings)
 	clone.H2.InitPriorityFrames = slices.Clone(f.H2.InitPriorityFrames)
@@ -107,6 +113,7 @@ func (f *Fingerprint) Validate() error {
 	return errors.Join(
 		f.validateClientHello(),
 		fingerprint.ValidateHeaderOrder(f.HeaderOrder),
+		fingerprint.ValidateHeaderCase(f.H1HeaderCase),
 		fingerprint.ValidatePseudoHeaderOrder(f.PseudoHeaderOrder),
 		f.H2.Validate(),
 	)
@@ -150,6 +157,7 @@ func validateRequestOrder(request *Request) error {
 	return errors.Join(
 		priorityError,
 		fingerprint.ValidateHeaderOrder(request.HeaderOrder),
+		fingerprint.ValidateHeaderCase(request.H1HeaderCase),
 		fingerprint.ValidatePseudoHeaderOrder(request.PseudoHeaderOrder),
 	)
 }

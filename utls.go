@@ -302,15 +302,16 @@ func (pconn *persistConn) configureUTLS(c *utls.UConn, config *utls.Config, orig
 // convertUTLSConnectionState converts a utls ConnectionState to a
 // standard crypto/tls ConnectionState.
 //
-// Audit this conversion whenever either TLS package adds fields. uTLS's
-// private negotiated curve and crypto/tls's private keying-material exporter
-// cannot be translated. Callers must not use ExportKeyingMaterial on this state.
+// Audit this conversion whenever either TLS package adds fields. The private
+// keying-material exporter cannot be translated. Callers must not use
+// ExportKeyingMaterial on this state.
 func convertUTLSConnectionState(ucs utls.ConnectionState) tls.ConnectionState {
 	return tls.ConnectionState{
 		Version:                     ucs.Version,
 		HandshakeComplete:           ucs.HandshakeComplete,
 		DidResume:                   ucs.DidResume,
 		CipherSuite:                 ucs.CipherSuite,
+		CurveID:                     tls.CurveID(ucs.CurveID),
 		NegotiatedProtocol:          ucs.NegotiatedProtocol,
 		NegotiatedProtocolIsMutual:  ucs.NegotiatedProtocolIsMutual,
 		ServerName:                  ucs.ServerName,
@@ -320,5 +321,7 @@ func convertUTLSConnectionState(ucs utls.ConnectionState) tls.ConnectionState {
 		OCSPResponse:                ucs.OCSPResponse,
 		TLSUnique:                   ucs.TLSUnique,
 		ECHAccepted:                 ucs.ECHAccepted,
+		HelloRetryRequest:           ucs.HelloRetryRequest,
+		LocalCertificate:            ucs.LocalCertificate,
 	}
 }

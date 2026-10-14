@@ -284,12 +284,17 @@ func (t *transferWriter) shouldSendContentLength() bool {
 }
 
 func (t *transferWriter) writeHeader(w io.Writer, trace *httptrace.ClientTrace) error {
+	return t.writeHeaderCase(w, trace, nil)
+}
+
+func (t *transferWriter) writeHeaderCase(w io.Writer, trace *httptrace.ClientTrace, names map[string]string) error {
 	if t.Close && !hasToken(t.Header.get("Connection"), "close") {
-		if _, err := io.WriteString(w, "Connection: close\r\n"); err != nil {
+		name := wireHeaderName("Connection", names)
+		if _, err := io.WriteString(w, name+": close\r\n"); err != nil {
 			return err
 		}
 		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField("Connection", []string{"close"})
+			trace.WroteHeaderField(name, []string{"close"})
 		}
 	}
 
@@ -297,21 +302,23 @@ func (t *transferWriter) writeHeader(w io.Writer, trace *httptrace.ClientTrace) 
 	// function of the sanitized field triple (Body, ContentLength,
 	// TransferEncoding)
 	if t.shouldSendContentLength() {
-		if _, err := io.WriteString(w, "Content-Length: "); err != nil {
+		name := wireHeaderName("Content-Length", names)
+		if _, err := io.WriteString(w, name+": "); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, strconv.FormatInt(t.ContentLength, 10)+"\r\n"); err != nil {
 			return err
 		}
 		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField("Content-Length", []string{strconv.FormatInt(t.ContentLength, 10)})
+			trace.WroteHeaderField(name, []string{strconv.FormatInt(t.ContentLength, 10)})
 		}
 	} else if chunked(t.TransferEncoding) {
-		if _, err := io.WriteString(w, "Transfer-Encoding: chunked\r\n"); err != nil {
+		name := wireHeaderName("Transfer-Encoding", names)
+		if _, err := io.WriteString(w, name+": chunked\r\n"); err != nil {
 			return err
 		}
 		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField("Transfer-Encoding", []string{"chunked"})
+			trace.WroteHeaderField(name, []string{"chunked"})
 		}
 	}
 
@@ -324,11 +331,12 @@ func (t *transferWriter) writeHeader(w io.Writer, trace *httptrace.ClientTrace) 
 		if len(keys) > 0 {
 			// TODO: could do better allocation-wise here, but trailers are rare,
 			// so being lazy for now.
-			if _, err := io.WriteString(w, "Trailer: "+strings.Join(keys, ",")+"\r\n"); err != nil {
+			name := wireHeaderName("Trailer", names)
+			if _, err := io.WriteString(w, name+": "+strings.Join(keys, ",")+"\r\n"); err != nil {
 				return err
 			}
 			if trace != nil && trace.WroteHeaderField != nil {
-				trace.WroteHeaderField("Trailer", keys)
+				trace.WroteHeaderField(name, keys)
 			}
 		}
 	}
@@ -338,6 +346,10 @@ func (t *transferWriter) writeHeader(w io.Writer, trace *httptrace.ClientTrace) 
 
 // always closes t.BodyCloser
 func (t *transferWriter) writeBody(w io.Writer) (err error) {
+	return t.writeBodyCase(w, nil)
+}
+
+func (t *transferWriter) writeBodyCase(w io.Writer, names map[string]string) (err error) {
 	var ncopy int64
 	closed := false
 	defer func() {
@@ -398,7 +410,7 @@ func (t *transferWriter) writeBody(w io.Writer) (err error) {
 	if !t.ResponseToHEAD && chunked(t.TransferEncoding) {
 		// Write Trailer header
 		if t.Trailer != nil {
-			if err := t.Trailer.Write(w); err != nil {
+			if err := t.Trailer.writeSubsetCase(w, nil, nil, names); err != nil {
 				return err
 			}
 		}
@@ -531,7 +543,7 @@ func readTransfer(msg any, r *bufio.Reader, maxTrailerHeaders int64) (err error)
 	}
 
 	// Trailer
-	t.Trailer, err = fixTrailer(t.Header, t.Chunked)
+	t.Trailer, err = fixTrailer(t.Header, t.Chunked, maxTrailerHeaders)
 	if err != nil {
 		return err
 	}
@@ -702,6 +714,16 @@ func (t *transferReader) determineBodyLength(isResponse bool) error {
 		t.RealBodyLength = -1
 		t.ContentLength = -1
 		t.Close = true
+		if hasContentLength && parsedContentLength == 0 {
+			// This is not particularly principled, but avoids breaking some
+			// users depending on past behavior. If a 2xx CONNECT response contains
+			// a "Content-Length: 0" header, we leave the header in place and
+			// set the content length to 0 (so Response.Body is NoBody).
+			// We still set t.Close to close the connection.
+			t.RealBodyLength = 0
+			t.ContentLength = 0
+			t.Header["Content-Length"] = contentLength
+		}
 		return nil
 	}
 
@@ -796,7 +818,7 @@ func shouldClose(major, minor int, header Header, removeCloseHeader bool) bool {
 }
 
 // Parse the trailer header.
-func fixTrailer(header Header, chunked bool) (Header, error) {
+func fixTrailer(header Header, chunked bool, maxHeaders int64) (Header, error) {
 	vv, ok := header["Trailer"]
 	if !ok {
 		return nil, nil
@@ -812,6 +834,12 @@ func fixTrailer(header Header, chunked bool) (Header, error) {
 		return nil, nil
 	}
 	header.Del("Trailer")
+	for _, v := range vv {
+		maxHeaders -= int64(strings.Count(v, ",") + 1)
+		if maxHeaders < 0 {
+			return nil, errTooLarge
+		}
+	}
 
 	trailer := make(Header)
 	var err error

@@ -111,6 +111,11 @@ type HTTP2 struct {
 	// It must explicitly disable server push, which this client does not support.
 	Settings []Setting
 
+	// SettingsFactory creates fresh ordered settings once per connection.
+	// It must be concurrency-safe, return owned data, and cannot accompany
+	// Settings. Each result is validated before the client preface is sent.
+	SettingsFactory func() ([]Setting, error)
+
 	// ConnectionFlow overrides the initial WINDOW_UPDATE increment.
 	// Zero uses the standard Go increment.
 	ConnectionFlow uint32
@@ -151,6 +156,9 @@ func (h HTTP2) SettingValue(id SettingID) (uint32, bool) {
 // Validate rejects configurations that cannot be sent or honored safely.
 func (h HTTP2) Validate() error {
 	var problems []error
+	if h.SettingsFactory != nil && h.Settings != nil {
+		problems = append(problems, errors.New("fphttp: use either H2 Settings or SettingsFactory"))
+	}
 	seen := make(map[SettingID]bool, len(h.Settings))
 
 	for _, setting := range h.Settings {
@@ -216,6 +224,50 @@ func (h HTTP2) Validate() error {
 	}
 
 	return errors.Join(problems...)
+}
+
+// ForConnection resolves and validates connection-specific settings. Factories
+// are removed from the result, and all mutable slices are independently owned.
+func (h HTTP2) ForConnection() (HTTP2, error) {
+	if err := h.Validate(); err != nil {
+		return HTTP2{}, err
+	}
+	if h.SettingsFactory != nil {
+		settings, err := h.SettingsFactory()
+		if err != nil {
+			return HTTP2{}, fmt.Errorf("fphttp: build H2 settings: %w", err)
+		}
+		if settings == nil {
+			return HTTP2{}, errors.New("fphttp: H2 SettingsFactory returned nil settings")
+		}
+		h.Settings = settings
+		h.SettingsFactory = nil
+	}
+	h.Settings = slices.Clone(h.Settings)
+	h.InitPriorityFrames = slices.Clone(h.InitPriorityFrames)
+	if err := h.Validate(); err != nil {
+		return HTTP2{}, err
+	}
+
+	return h, nil
+}
+
+// ForConnection copies a transport configuration and resolves fresh settings.
+// A nil configuration retains the ordinary Go connection behavior.
+func (c *Config) ForConnection() (*Config, error) {
+	if c == nil {
+		return nil, nil
+	}
+	h2, err := c.H2.ForConnection()
+	if err != nil {
+		return nil, err
+	}
+	clone := *c
+	clone.H2 = h2
+	clone.HeaderOrder = slices.Clone(c.HeaderOrder)
+	clone.PseudoHeaderOrder = slices.Clone(c.PseudoHeaderOrder)
+
+	return &clone, nil
 }
 
 // ValidateHeaderOrder checks canonical field names and duplicates.

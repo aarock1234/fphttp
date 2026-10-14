@@ -63,6 +63,9 @@ type ClientRequest struct {
 	// H2Priority overrides the transport HEADERS priority when non-nil.
 	H2Priority *fingerprint.Priority
 
+	// H2PriorityHeader supplies a Priority field unless Header already has one.
+	H2PriorityHeader string
+
 	// Include the per-request stream in the ClientRequest to avoid an allocation.
 	stream clientStream
 }
@@ -88,6 +91,7 @@ func (req *ClientRequest) Clone() *ClientRequest {
 		HeaderOrder:       req.HeaderOrder,
 		PseudoHeaderOrder: req.PseudoHeaderOrder,
 		H2Priority:        req.H2Priority,
+		H2PriorityHeader:  req.H2PriorityHeader,
 	}
 }
 

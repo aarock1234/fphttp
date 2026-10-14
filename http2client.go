@@ -131,6 +131,7 @@ func http2RoundTrip(req *Request, rt func(*http2.ClientRequest) (*http2.ClientRe
 		HeaderOrder:       req.HeaderOrder,
 		PseudoHeaderOrder: req.PseudoHeaderOrder,
 		H2Priority:        req.H2Priority,
+		H2PriorityHeader:  req.H2PriorityHeader,
 	})
 	if err != nil {
 		return nil, err

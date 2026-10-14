@@ -303,6 +303,12 @@ type Request struct {
 	// This field is ignored by the HTTP server.
 	HeaderOrder []string
 
+	// H1HeaderCase specifies HTTP/1.1 field spelling without changing order.
+	// Keys are canonical names and values must differ only in case. Nil uses
+	// the transport fingerprint; an empty map disables that inheritance.
+	// This field is ignored for HTTP/2 and by the HTTP server.
+	H1HeaderCase map[string]string
+
 	// PseudoHeaderOrder specifies the order of HTTP/2 pseudo-headers
 	// (:method, :authority, :scheme, :path). A nonempty order must
 	// contain all four exactly once. If nil, the Transport's
@@ -317,6 +323,13 @@ type Request struct {
 	// Nil uses the fingerprint; a non-nil value with Enabled false omits legacy
 	// priority. This field is ignored for HTTP/1.1 and by the HTTP server.
 	H2Priority *H2Priority
+
+	// H2PriorityHeader supplies a Priority field for HTTP/2 requests only.
+	// Empty adds no field. A case-insensitive Priority key in Header takes
+	// precedence, including an empty or nil value that suppresses generation.
+	// The generated field follows all other regular fields unless HeaderOrder
+	// explicitly lists Priority. It is ignored for HTTP/1.1 and by the server.
+	H2PriorityHeader string
 
 	// RemoteAddr allows HTTP servers and other software to record
 	// the network address that sent the request, usually for
@@ -428,6 +441,7 @@ func (r *Request) Clone(ctx context.Context) *Request {
 	r2.ctx = ctx
 	r2.URL = cloneURL(r.URL)
 	r2.Header = r.Header.Clone()
+	r2.H1HeaderCase = maps.Clone(r.H1HeaderCase)
 	r2.Trailer = r.Trailer.Clone()
 	if s := r.TransferEncoding; s != nil {
 		s2 := make([]string, len(s))
@@ -744,12 +758,13 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		}
 	} else {
 		// Header lines
-		_, err = fmt.Fprintf(w, "Host: %s\r\n", host)
+		hostName := wireHeaderName("Host", r.H1HeaderCase)
+		_, err = fmt.Fprintf(w, "%s: %s\r\n", hostName, host)
 		if err != nil {
 			return err
 		}
 		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField("Host", []string{host})
+			trace.WroteHeaderField(hostName, []string{host})
 		}
 
 		// Use the defaultUserAgent unless the Header contains one, which
@@ -761,12 +776,13 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		if userAgent != "" {
 			userAgent = headerNewlineToSpace.Replace(userAgent)
 			userAgent = textproto.TrimString(userAgent)
-			_, err = fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent)
+			userAgentName := wireHeaderName("User-Agent", r.H1HeaderCase)
+			_, err = fmt.Fprintf(w, "%s: %s\r\n", userAgentName, userAgent)
 			if err != nil {
 				return err
 			}
 			if trace != nil && trace.WroteHeaderField != nil {
-				trace.WroteHeaderField("User-Agent", []string{userAgent})
+				trace.WroteHeaderField(userAgentName, []string{userAgent})
 			}
 		}
 
@@ -775,18 +791,18 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		if err != nil {
 			return err
 		}
-		err = tw.writeHeader(w, trace)
+		err = tw.writeHeaderCase(w, trace, r.H1HeaderCase)
 		if err != nil {
 			return err
 		}
 
-		err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)
+		err = r.Header.writeSubsetCase(w, reqWriteExcludeHeader, trace, r.H1HeaderCase)
 		if err != nil {
 			return err
 		}
 
 		if extraHeaders != nil {
-			err = extraHeaders.write(w, trace)
+			err = extraHeaders.writeSubsetCase(w, nil, trace, r.H1HeaderCase)
 			if err != nil {
 				return err
 			}
@@ -828,7 +844,7 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 
 	// Write body and trailer
 	closed = true
-	err = tw.writeBody(w)
+	err = tw.writeBodyCase(w, r.H1HeaderCase)
 	if err != nil {
 		if tw.bodyReadError == err {
 			err = requestBodyReadError{err}
