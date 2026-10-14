@@ -48,15 +48,25 @@ func (c *utlsConn) ConnectionState() tls.ConnectionState {
 // replaces the crypto/tls handshake in addTLS when the profile has a
 // NewHello. tlsConfig is the per-dial copy of TLSClientConfig with
 // ServerName set.
+//
+// uTLS reads through a handshakeConn, which accepts the server's plaintext
+// records as browsers do and hands uTLS the private key of a secondary key
+// share the server selects.
 func (pconn *persistConn) addProfileTLS(ctx context.Context, tlsConfig *tls.Config, trace *httptrace.ClientTrace) error {
 	plainConn := pconn.conn
+	handshakeConn := newHandshakeConn(plainConn)
 	config := pconn.profileUTLSConfig(tlsConfig)
-	tlsConn := utls.UClient(plainConn, config, utls.HelloCustom)
+	tlsConn := utls.UClient(handshakeConn, config, utls.HelloCustom)
 
-	if err := applyProfileHello(tlsConn, pconn.t.profileState.snapshot.TLS.NewHello); err != nil {
+	keys, err := applyProfileHello(tlsConn, pconn.t.profileState.snapshot.TLS.NewHello)
+	if err != nil {
 		_ = plainConn.Close()
 
 		return fmt.Errorf("fphttp: apply profile ClientHello: %w", err)
+	}
+
+	handshakeConn.onServerHello = func(group utls.CurveID) {
+		keys.use(tlsConn, group)
 	}
 
 	if err := pconn.configureUTLS(tlsConn, config, tlsConfig); err != nil {

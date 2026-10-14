@@ -9,14 +9,24 @@ import (
 )
 
 // applyProfileHello builds a fresh ClientHello with newHello and applies it
-// to conn.
-func applyProfileHello(conn *utls.UConn, newHello func() (*utls.ClientHelloSpec, error)) error {
+// to conn. It returns the private keys of the classical key shares that
+// uTLS does not keep.
+func applyProfileHello(conn *utls.UConn, newHello func() (*utls.ClientHelloSpec, error)) (secondaryKeyShares, error) {
 	spec, err := newProfileHello(newHello)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return conn.ApplyPreset(spec)
+	keys, err := generateSecondaryKeyShares(spec)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := conn.ApplyPreset(spec); err != nil {
+		return nil, err
+	}
+
+	return keys, nil
 }
 
 // newProfileHello calls newHello and checks that the spec it returns can be
