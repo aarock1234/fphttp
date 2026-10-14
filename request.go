@@ -293,15 +293,16 @@ type Request struct {
 	// priority, and whether a Client applies cookies.
 	//
 	// A Client applies and stores its Jar's cookies for every navigation and
-	// for most subresources. For fetch(), font, manifest, and worker
-	// requests it does so only when Initiator is nil or has the same origin
-	// as the request URL, and it never does for a Destination that is not
-	// one of the Destination constants. A request that is not a navigation
-	// can also decline the Jar's cookies with a present but empty Cookie
-	// field, such as Header["Cookie"] = []string{""}, for every redirect hop
-	// the Client follows, including hops to another host. A navigation (the
-	// zero value, DestinationDocument, DestinationIframe, or
-	// DestinationFrame) always gets them, as without Destination.
+	// for most subresources. For fetch(), font, report, and worker requests
+	// it does so only when Initiator is nil or has the same origin as the
+	// request URL, and it never does for a manifest or for a Destination
+	// that is not one of the Destination constants. A request that is not a
+	// navigation can also decline the Jar's cookies with a present but empty
+	// Cookie field, such as Header["Cookie"] = []string{""}, for every
+	// redirect hop the Client follows, including hops to another host. A
+	// navigation (the zero value, DestinationDocument, DestinationIframe,
+	// DestinationFrame, DestinationObject, or DestinationEmbed) always gets
+	// them, as without Destination.
 	//
 	// A Transport with a Profile fails a request whose Destination is not
 	// one of the Destination constants. Without a Profile, the Transport
@@ -362,7 +363,8 @@ type Request struct {
 
 	// H2PriorityHeader supplies a Priority field for HTTP/2 requests only.
 	// Empty adds no field. A case-insensitive Priority key in Header takes
-	// precedence, including an empty or nil value that suppresses generation.
+	// precedence, including an empty or nil value that suppresses generation;
+	// a Priority in the Transport Profile's Header does not.
 	// The generated field follows all other regular fields unless HeaderOrder
 	// explicitly lists Priority. It is ignored for HTTP/1.1 and by the server.
 	H2PriorityHeader string

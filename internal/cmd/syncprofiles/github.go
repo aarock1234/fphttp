@@ -13,9 +13,9 @@ var releasePageTimePattern = regexp.MustCompile(`<relative-time\b[^>]*\bdatetime
 
 // githubReleaseTime reads the publication time of a release from its HTML
 // page. A release without a public page, such as a draft, fails with a
-// *statusError for 404 Not Found.
+// *releasefetch.StatusError for 404 Not Found.
 func (c *collector) githubReleaseTime(ctx context.Context, repository, tag string) (time.Time, error) {
-	page, err := c.fetcher.fetch(ctx, "https://github.com/"+repository+"/releases/tag/"+tag)
+	page, err := c.fetcher.Fetch(ctx, "https://github.com/"+repository+"/releases/tag/"+tag)
 	if err != nil {
 		return time.Time{}, err
 	}

@@ -68,10 +68,9 @@ type ChromiumWire struct {
 	PriorityHeader bool
 }
 
-// Chromium wires, named after the first Chrome major that shipped them. The
-// IDs in parentheses are the configuration IDs of the v2 design spec.
+// Chromium wires, named after the first Chrome major that shipped them.
 var (
-	// chromium108 (C0) is the classical hello in fixed extension order with
+	// chromium108 is the classical hello in fixed extension order with
 	// MAX_CONCURRENT_STREAMS 1000.
 	chromium108 = newChromiumWire(&ChromiumWire{
 		Name:                 "chromium-108",
@@ -79,7 +78,7 @@ var (
 		MaxConcurrentStreams: 1000,
 	})
 
-	// chromium111 (C1) starts shuffling extensions.
+	// chromium111 starts shuffling extensions.
 	chromium111 = newChromiumWire(&ChromiumWire{
 		Name:                 "chromium-111",
 		Hello:                ChromiumHelloClassical,
@@ -87,21 +86,21 @@ var (
 		MaxConcurrentStreams: 1000,
 	})
 
-	// chromium117 (C2) stops sending MAX_CONCURRENT_STREAMS.
+	// chromium117 stops sending MAX_CONCURRENT_STREAMS.
 	chromium117 = newChromiumWire(&ChromiumWire{
 		Name:    "chromium-117",
 		Hello:   ChromiumHelloClassical,
 		Shuffle: true,
 	})
 
-	// chromium119 (C3) adds ECH GREASE.
+	// chromium119 adds ECH GREASE.
 	chromium119 = newChromiumWire(&ChromiumWire{
 		Name:    "chromium-119",
 		Hello:   ChromiumHelloECH,
 		Shuffle: true,
 	})
 
-	// chromium124 (C4) adds the X25519Kyber768 key share on desktop and the
+	// chromium124 adds the X25519Kyber768 key share on desktop and the
 	// HTTP/2 Priority field.
 	chromium124 = newChromiumWire(&ChromiumWire{
 		Name:           "chromium-124",
@@ -110,7 +109,7 @@ var (
 		PriorityHeader: true,
 	})
 
-	// chromiumAndroid124 (C8) is Android before post-quantum key agreement
+	// chromiumAndroid124 is Android before post-quantum key agreement
 	// (PostQuantumKyber stayed off on Android until 133): ECH GREASE and the
 	// HTTP/2 Priority field.
 	chromiumAndroid124 = newChromiumWire(&ChromiumWire{
@@ -120,7 +119,7 @@ var (
 		PriorityHeader: true,
 	})
 
-	// chromium131 (C5) replaces Kyber with X25519MLKEM768.
+	// chromium131 replaces Kyber with X25519MLKEM768.
 	chromium131 = newChromiumWire(&ChromiumWire{
 		Name:           "chromium-131",
 		Hello:          ChromiumHelloMLKEM,
@@ -128,7 +127,7 @@ var (
 		PriorityHeader: true,
 	})
 
-	// chromium135 (C6) moves ALPS to its new code point.
+	// chromium135 moves ALPS to its new code point.
 	chromium135 = newChromiumWire(&ChromiumWire{
 		Name:           "chromium-135",
 		Hello:          ChromiumHelloMLKEM,
@@ -137,7 +136,7 @@ var (
 		PriorityHeader: true,
 	})
 
-	// chromium150 (C9) adds ML-DSA signature algorithms.
+	// chromium150 adds ML-DSA signature algorithms.
 	chromium150 = newChromiumWire(&ChromiumWire{
 		Name:           "chromium-150",
 		Hello:          ChromiumHelloMLKEM,
@@ -147,7 +146,7 @@ var (
 		PriorityHeader: true,
 	})
 
-	// chromium152 (C10) adds signature algorithm GREASE and 32 Trust Anchor
+	// chromium152 adds signature algorithm GREASE and 32 Trust Anchor
 	// IDs.
 	chromium152 = newChromiumWire(&ChromiumWire{
 		Name:            "chromium-152",
@@ -160,7 +159,7 @@ var (
 		PriorityHeader:  true,
 	})
 
-	// chromium153 (C11) sends the 28 Trust Anchor IDs left in the Chrome
+	// chromium153 sends the 28 Trust Anchor IDs left in the Chrome
 	// Root Store.
 	chromium153 = newChromiumWire(&ChromiumWire{
 		Name:            "chromium-153",
@@ -173,7 +172,7 @@ var (
 		PriorityHeader:  true,
 	})
 
-	// brave152 (C12) is Brave from Chromium 152, which disables Trust Anchor
+	// brave152 is Brave from Chromium 152, which disables Trust Anchor
 	// IDs and so sends none.
 	brave152 = newChromiumWire(&ChromiumWire{
 		Name:            "brave-152",

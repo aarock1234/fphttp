@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
 
 // deriveConcurrency bounds the targets derived at once. The fetcher
@@ -17,7 +19,7 @@ const deriveConcurrency = 8
 //
 // A target that cannot be derived is a finding, not a failure; only the end
 // of ctx stops the check and returns an error.
-func checkSources(ctx context.Context, sources *fetcher) ([]finding, error) {
+func checkSources(ctx context.Context, sources *releasefetch.Fetcher) ([]finding, error) {
 	targets := collectTargets()
 
 	slog.InfoContext(ctx, "deriving wires from browser source", slog.Int("targets", len(targets)))
@@ -34,7 +36,7 @@ func checkSources(ctx context.Context, sources *fetcher) ([]finding, error) {
 }
 
 // verifyTarget derives one target's wire and compares it with the catalog.
-func verifyTarget(ctx context.Context, sources *fetcher, t target) []finding {
+func verifyTarget(ctx context.Context, sources *releasefetch.Fetcher, t target) []finding {
 	if t.representative.Version == "" {
 		return []finding{t.derivationFinding(errors.New("no release of the source browser to derive this major from"))}
 	}

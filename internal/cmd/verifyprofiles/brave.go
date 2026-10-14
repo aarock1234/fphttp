@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
 
 // braveCoreURL is the raw file prefix of the brave-core repository.
@@ -33,7 +35,7 @@ type braveProject struct {
 // verifyBrave derives the wire of a target's Brave release from the
 // Chromium build brave-core pins, with Brave's feature overrides, and
 // compares it with every Brave release on that Chromium major.
-func verifyBrave(ctx context.Context, sources *fetcher, t target) []finding {
+func verifyBrave(ctx context.Context, sources *releasefetch.Fetcher, t target) []finding {
 	tag := "v" + t.representative.Version
 
 	chromiumTag, err := braveChromiumPin(ctx, sources, tag)
@@ -67,8 +69,8 @@ func verifyBrave(ctx context.Context, sources *fetcher, t target) []finding {
 }
 
 // braveChromiumPin returns the Chromium build brave-core pins at tag.
-func braveChromiumPin(ctx context.Context, sources *fetcher, tag string) (string, error) {
-	pin, err := sources.fetchJSON[bravePackage](ctx, braveCoreURL+tag+"/package.json")
+func braveChromiumPin(ctx context.Context, sources *releasefetch.Fetcher, tag string) (string, error) {
+	pin, err := sources.FetchJSON[bravePackage](ctx, braveCoreURL+tag+"/package.json")
 	if err != nil {
 		return "", fmt.Errorf("brave %s: %w", tag, err)
 	}

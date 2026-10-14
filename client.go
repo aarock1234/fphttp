@@ -647,7 +647,7 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 			Err: err,
 		}
 	}
-	// fphttp: Critical-CH restarts; with a Jar, this copies req.Header
+	// fphttp: Critical-CH restarts; this records req's Cookie field
 	// before the first send (client_restart.go).
 	restarts := c.newHintRestarts(req)
 	for {

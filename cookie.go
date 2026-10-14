@@ -516,8 +516,7 @@ func sanitizeCookieValue(v string, quoted bool) string {
 }
 
 func validCookieValueByte(b byte) bool {
-	// This fork permits double quotes in cookie values.
-	return 0x20 <= b && b < 0x7f && b != ';' && b != '\\'
+	return 0x20 <= b && b < 0x7f && b != '"' && b != ';' && b != '\\'
 }
 
 // path-av           = "Path=" path-value

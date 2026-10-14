@@ -77,18 +77,17 @@ var (
 )
 
 // Desktop Firefox wires (Windows, macOS, Linux), named after the first
-// stable major that shipped them. The IDs in parentheses are the
-// configuration IDs of the v2 design spec.
+// stable major that shipped them.
 var (
-	// firefox108 (F8) has no ECH and uses the legacy priority tree. Firefox
-	// ESR 102 and 115 share it.
+	// firefox108 has no ECH and uses the legacy priority tree. Firefox ESR
+	// 102 and 115 share it.
 	firefox108 = newFirefoxWire(&FirefoxWire{
 		Name:       "firefox-108",
 		FFDHE:      true,
 		LegacyTree: true,
 	})
 
-	// firefox119 (F0) adds ECH GREASE.
+	// firefox119 adds ECH GREASE.
 	//
 	// Stable 128 resolves to 128.0.3, which restored the legacy tree.
 	// Firefox 128.0 and 128.0.2 sent no tree, NO_RFC7540_PRIORITIES 1, and
@@ -101,7 +100,7 @@ var (
 		LegacyTree: true,
 	})
 
-	// firefox132 (F12) drops the legacy tree, adds ML-KEM and certificate
+	// firefox132 drops the legacy tree, adds ML-KEM and certificate
 	// compression, and is the only stable major that sends
 	// NO_RFC7540_PRIORITIES.
 	//
@@ -120,7 +119,7 @@ var (
 		NoRFC7540Priorities: true,
 	})
 
-	// firefox133 (F3) stops sending NO_RFC7540_PRIORITIES.
+	// firefox133 stops sending NO_RFC7540_PRIORITIES.
 	firefox133 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-133",
 		ECH:             true,
@@ -129,7 +128,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefox135 (F10) adds the SCT extension. Firefox ESR 140 shares it.
+	// firefox135 adds the SCT extension. Firefox ESR 140 shares it.
 	firefox135 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-135",
 		ECH:             true,
@@ -139,8 +138,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefox150 (F11) drops ECDHE-ECDSA-AES128-SHA. Firefox ESR 153
-	// shares it.
+	// firefox150 drops ECDHE-ECDSA-AES128-SHA. Firefox ESR 153 shares it.
 	firefox150 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-150",
 		ECH:             true,
@@ -151,7 +149,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefox154 (F6) also drops ECDHE-ECDSA-AES256-SHA.
+	// firefox154 also drops ECDHE-ECDSA-AES256-SHA.
 	firefox154 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-154",
 		ECH:             true,
@@ -162,7 +160,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefox156 (F7) drops the FFDHE groups.
+	// firefox156 drops the FFDHE groups.
 	firefox156 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-156",
 		ECH:             true,
@@ -172,7 +170,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefoxESR128 (F9) is Firefox ESR 128.14, which differs from stable
+	// firefoxESR128 is Firefox ESR 128.14, which differs from stable
 	// 128: no legacy tree (deps and push off since 128.5esr, no
 	// MAX_CONCURRENT_STREAMS since 128.6esr) and no certificate
 	// compression.
@@ -192,7 +190,7 @@ var (
 // shipped them. They share the desktop TLS features of their era but use
 // GeckoView's HTTP/2 window settings.
 var (
-	// firefoxAndroid126 (F0) has ECH GREASE and the legacy priority tree.
+	// firefoxAndroid126 has ECH GREASE and the legacy priority tree.
 	firefoxAndroid126 = newFirefoxWire(&FirefoxWire{
 		Name:       "firefox-android-126",
 		Android:    true,
@@ -201,7 +199,7 @@ var (
 		LegacyTree: true,
 	})
 
-	// firefoxAndroid132 (F1) drops the legacy tree, adds certificate
+	// firefoxAndroid132 drops the legacy tree, adds certificate
 	// compression, and sends NO_RFC7540_PRIORITIES, without ML-KEM. Like
 	// firefox132, it really sends the setting together with HEADERS frames
 	// that carry the PRIORITY flag.
@@ -214,7 +212,7 @@ var (
 		NoRFC7540Priorities: true,
 	})
 
-	// firefoxAndroid133 (F2) stops sending NO_RFC7540_PRIORITIES.
+	// firefoxAndroid133 stops sending NO_RFC7540_PRIORITIES.
 	firefoxAndroid133 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-android-133",
 		Android:         true,
@@ -223,7 +221,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefoxAndroid145 (F3) adds ML-KEM.
+	// firefoxAndroid145 adds ML-KEM.
 	firefoxAndroid145 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-android-145",
 		Android:         true,
@@ -233,7 +231,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefoxAndroid150 (F4) drops ECDHE-ECDSA-AES128-SHA.
+	// firefoxAndroid150 drops ECDHE-ECDSA-AES128-SHA.
 	firefoxAndroid150 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-android-150",
 		Android:         true,
@@ -244,7 +242,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefoxAndroid154 (F5) also drops ECDHE-ECDSA-AES256-SHA.
+	// firefoxAndroid154 also drops ECDHE-ECDSA-AES256-SHA.
 	firefoxAndroid154 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-android-154",
 		Android:         true,
@@ -255,7 +253,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefoxAndroid155 (F6) adds the SCT extension.
+	// firefoxAndroid155 adds the SCT extension.
 	firefoxAndroid155 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-android-155",
 		Android:         true,
@@ -267,7 +265,7 @@ var (
 		CertCompression: firefoxCertCompression,
 	})
 
-	// firefoxAndroid156 (F7) drops the FFDHE groups.
+	// firefoxAndroid156 drops the FFDHE groups.
 	firefoxAndroid156 = newFirefoxWire(&FirefoxWire{
 		Name:            "firefox-android-156",
 		Android:         true,

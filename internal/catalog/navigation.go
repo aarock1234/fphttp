@@ -15,15 +15,25 @@ const (
 // none. Chromium and Firefox send "1" on every document and iframe load, on
 // http and https alike, and never on subresources.
 //
+// Chromium adds it to every frame navigation, which includes the content
+// frames of object and embed elements (AddAdditionalRequestHeaders in
+// navigation_request.cc). Firefox adds it to document and subdocument loads
+// only (nsHttpChannel::OnBeforeConnect), so not to object and embed loads.
+//
 // Safari sends none: its captured navigations carry no
 // Upgrade-Insecure-Requests, and subframes, which were not captured, are
 // assumed to match.
 func (e Entry) UpgradeInsecureRequests(destination string) string {
-	if !e.sendsUserNavigationFields() || !parseDestination(destination).navigation() {
+	kind := parseDestination(destination)
+
+	switch {
+	case e.Family == FamilyChromium && kind.chromiumNavigation(),
+		e.Family == FamilyFirefox && kind.navigation():
+		return upgradeInsecureRequestsValue
+
+	default:
 		return ""
 	}
-
-	return upgradeInsecureRequestsValue
 }
 
 // SecFetchUser returns the Sec-Fetch-User value the release sends for a

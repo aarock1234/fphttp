@@ -13,6 +13,11 @@ const (
 	// maxComponentDigits keeps a component well inside int range.
 	maxComponentDigits = 9
 
+	// saturatedComponent stands in for a component with more than
+	// maxComponentDigits digits. It is above every cataloged component, so
+	// such a version still sorts as newer than every release.
+	saturatedComponent = 1_000_000_000
+
 	// braveProductMajor is the first component of every Brave release.
 	braveProductMajor = 1
 )
@@ -88,9 +93,12 @@ func parseVersionParts(version string) (versionParts, bool) {
 	}
 }
 
-// parseVersionComponent parses one decimal component of a version.
+// parseVersionComponent parses one decimal component of a version. A
+// component longer than maxComponentDigits is well formed but saturates at
+// saturatedComponent, so it compares as newer than every release instead
+// of overflowing.
 func parseVersionComponent(component string) (int, bool) {
-	if component == "" || len(component) > maxComponentDigits {
+	if component == "" {
 		return 0, false
 	}
 
@@ -105,7 +113,13 @@ func parseVersionComponent(component string) (int, bool) {
 			return 0, false
 		}
 
-		value = value*10 + int(digit-'0')
+		if i < maxComponentDigits {
+			value = value*10 + int(digit-'0')
+		}
+	}
+
+	if len(component) > maxComponentDigits {
+		return saturatedComponent, true
 	}
 
 	return value, true

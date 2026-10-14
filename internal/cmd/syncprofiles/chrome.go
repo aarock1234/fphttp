@@ -64,7 +64,7 @@ func (c *collector) chromePlatform(ctx context.Context, target chromePlatform) (
 		target.feedName,
 	)
 
-	entries, err := c.fetcher.fetchJSON[[]chromeRelease](ctx, feedURL)
+	entries, err := c.fetcher.FetchJSON[[]chromeRelease](ctx, feedURL)
 	if err != nil {
 		return nil, err
 	}

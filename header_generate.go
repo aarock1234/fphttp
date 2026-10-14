@@ -36,10 +36,6 @@ type fieldGenerator struct {
 
 	// hintStore remembers the client hints each origin asked for.
 	hintStore *clientHintStore
-
-	// catalogPriorities reports that the catalog's per-destination HTTP/2
-	// priorities describe the profile (see usesCatalogPriorities).
-	catalogPriorities bool
 }
 
 // newFieldGenerator returns the generator for a prepared request of a
@@ -48,14 +44,13 @@ func (t *Transport) newFieldGenerator(request *Request, chain []*Request) *field
 	state := &t.profileState
 
 	return &fieldGenerator{
-		request:           request,
-		chain:             chain,
-		entry:             state.snapshot.entry,
-		target:            targetKind(request.URL),
-		keepAlive:         !t.DisableKeepAlives,
-		hintValues:        state.hintValues,
-		hintStore:         state.hints,
-		catalogPriorities: state.catalogPriorities,
+		request:    request,
+		chain:      chain,
+		entry:      state.snapshot.entry,
+		target:     targetKind(request.URL),
+		keepAlive:  !t.DisableKeepAlives,
+		hintValues: state.hintValues,
+		hintStore:  state.hints,
 	}
 }
 
@@ -67,6 +62,7 @@ func (g *fieldGenerator) generate() {
 	g.originField()
 	g.refererField()
 	g.clientHints()
+	g.requestFields()
 	g.connectionField()
 	g.priority()
 	g.http2OnlyFields()
@@ -145,6 +141,15 @@ func (g *fieldGenerator) sendsRange() bool {
 // Firefox send on document and iframe loads to http and https URLs alike.
 func (g *fieldGenerator) upgradeInsecureRequests() {
 	g.addMissing("Upgrade-Insecure-Requests", g.entry.UpgradeInsecureRequests(g.destination()))
+}
+
+// requestFields adds the other fields the release sends for the request's
+// Destination (catalog Entry.RequestFields), such as Brave's Sec-GPC and
+// the Service-Worker field of a service worker script.
+func (g *fieldGenerator) requestFields() {
+	for _, field := range g.entry.RequestFields(g.destination()) {
+		g.addMissing(CanonicalHeaderKey(field.Name), field.Value)
+	}
 }
 
 // connectionField adds Connection: keep-alive, which Chromium and Firefox

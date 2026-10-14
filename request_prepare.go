@@ -42,7 +42,8 @@ type profileHop struct {
 //  2. Profile.Header fills the fields the request does not set
 //     (layerProfileHeader).
 //  3. The per-destination header order replaces a nil HeaderOrder
-//     (selectHeaderOrder).
+//     (selectHeaderOrder), and the per-destination HTTP/2 HEADERS priority
+//     replaces a nil H2Priority (selectHTTP2Priority).
 //  4. A profile with a Header and a release identity generates the browser
 //     fields the request still lacks (fieldGenerator.generate).
 //  5. Present but empty fields, which suppress a field, are removed, and a
@@ -80,14 +81,15 @@ func (t *Transport) prepareRequest(req *Request) (*Request, error) {
 }
 
 // addBrowserFields runs steps 2 to 4 of prepareRequest on its private
-// clone: it layers the profile's Header, selects the header order for the
-// request's Destination, and generates the browser fields the request
-// still lacks.
+// clone: it layers the profile's Header, selects the header order and the
+// HTTP/2 HEADERS priority for the request's Destination, and generates the
+// browser fields the request still lacks.
 func (t *Transport) addBrowserFields(prepared *Request, snapshot *Profile) {
 	chain := prepared.redirectChain()
 
 	layerProfileHeader(prepared, snapshot.Header, chain)
 	selectHeaderOrder(prepared, snapshot)
+	t.selectHTTP2Priority(prepared)
 
 	if snapshot.generatesFields() {
 		t.newFieldGenerator(prepared, chain).generate()

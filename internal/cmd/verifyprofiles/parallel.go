@@ -3,26 +3,9 @@ package main
 import (
 	"context"
 	"sync"
+
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
-
-// semaphore bounds how many operations run at once. Its capacity is the
-// bound.
-type semaphore chan struct{}
-
-// acquire takes a slot, waiting until one is free or ctx ends.
-func (s semaphore) acquire(ctx context.Context) error {
-	select {
-	case s <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// release frees a slot taken by acquire.
-func (s semaphore) release() {
-	<-s
-}
 
 // mapBounded calls work for every item, at most limit at a time, and
 // returns the results in input order. Work reports its own failures in its
@@ -38,17 +21,17 @@ func mapBounded[T, R any](
 	work func(context.Context, T) R,
 ) []R {
 	results := make([]R, len(items))
-	slots := make(semaphore, limit)
+	slots := releasefetch.NewSemaphore(limit)
 
 	var workers sync.WaitGroup
 
 	for index, item := range items {
-		if slots.acquire(ctx) != nil {
+		if slots.Acquire(ctx) != nil {
 			break
 		}
 
 		workers.Go(func() {
-			defer slots.release()
+			defer slots.Release()
 
 			results[index] = work(ctx, item)
 		})

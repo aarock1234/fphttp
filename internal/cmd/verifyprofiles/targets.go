@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/aarock1234/fphttp/v2/internal/catalog"
+	"github.com/aarock1234/fphttp/v2/internal/releaseversion"
 )
 
 // sourceFamily is the browser source a group of releases is derived from.
@@ -139,7 +140,7 @@ func representsFamily(entry catalog.Entry, family sourceFamily) bool {
 // newerRelease reports whether candidate is a newer build than current, or
 // current is still unset.
 func newerRelease(candidate, current catalog.Entry) bool {
-	return current.Version == "" || compareVersions(candidate.Version, current.Version) > 0
+	return current.Version == "" || releaseversion.Compare(candidate.Version, current.Version) > 0
 }
 
 // compareTargets orders targets by family, then desktop before Android,

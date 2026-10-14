@@ -48,7 +48,13 @@ func fieldSuppressedFold(h Header, name string) bool {
 // emptyFieldValues reports whether values is a present but empty field
 // value: a nil or empty slice, or a single empty string.
 func emptyFieldValues(values []string) bool {
-	return len(values) == 0 || len(values) == 1 && values[0] == ""
+	if len(values) == 0 {
+		return true
+	}
+
+	singleEmpty := len(values) == 1 && values[0] == ""
+
+	return singleEmpty
 }
 
 // canonicalizeFieldFold moves the values of every key of h that spells name

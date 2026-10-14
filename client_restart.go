@@ -1,9 +1,19 @@
 package http
 
+import (
+	"io"
+	"slices"
+)
+
 // maxHintRestarts is the most times one Client call restarts its redirect
 // chain for client hints. Each origin restarts a call at most once, as in
 // Chromium; this bound also stops a chain that crosses many origins.
 const maxHintRestarts = 10
+
+// maxRestartDrain is how much of a restarted response's body is read before
+// it is closed, so a small body leaves its HTTP/1.1 connection reusable. It
+// matches the amount Client.do reads from a redirect response.
+const maxRestartDrain = 2 << 10
 
 // hintRestarts restarts the redirect chain of one Client call when a
 // Transport with a Profile marks a response (see Response.restartForHints):
@@ -18,12 +28,15 @@ type hintRestarts struct {
 	// first is the request passed to Client.Do.
 	first *Request
 
-	// jarHeader is first's Header as the caller set it, copied before the
-	// first send when the Client has a Jar, which adds its cookies to
-	// first's own Header, so rebuilding from that would send them twice.
-	// It is nil without a Jar: first's Header then stays as the caller set
-	// it, and is copied only when a restart happens.
-	jarHeader Header
+	// cookie is the Cookie field of first's Header as the caller set it,
+	// and hadCookie reports whether the field was present. A Client with a
+	// Jar adds its cookies to first's own Header before sending, which is
+	// the only change it makes there, so a restart rebuilds the caller's
+	// Header from first's with this field restored. Request.AddCookie
+	// replaces the field's slice rather than appending to it, so keeping
+	// the slice keeps the caller's values without copying them.
+	cookie    []string
+	hadCookie bool
 
 	// origins holds the origins whose responses restarted the chain.
 	origins map[string]bool
@@ -33,27 +46,25 @@ type hintRestarts struct {
 }
 
 // newHintRestarts returns the restart state of a Client call whose first
-// request is first. It must run before the first send, because with a Jar
-// it copies first's Header (see hintRestarts.jarHeader). Without a Jar it
+// request is first. It must run before the first send, because it records
+// first's Cookie field as the caller set it (see hintRestarts.cookie). It
 // copies nothing, and the state is a value the call keeps on its stack, so
 // a call that never restarts allocates nothing for it.
 func (c *Client) newHintRestarts(first *Request) hintRestarts {
-	restarts := hintRestarts{
-		first: first,
-	}
+	cookie, hadCookie := first.Header["Cookie"]
 
-	if c.Jar != nil {
-		restarts.jarHeader = first.Header.Clone()
+	return hintRestarts{
+		first:     first,
+		cookie:    cookie,
+		hadCookie: hadCookie,
 	}
-
-	return restarts
 }
 
 // restart returns the first request of a restarted redirect chain when
 // resp, the response to hop, asks for a restart that the limits allow, or
-// nil to carry on with resp. When it returns a request, it has closed
-// resp's body and hop's body, as following a redirect does. A first
-// request whose body cannot be replayed is not restarted.
+// nil to carry on with resp. When it returns a request, it has drained and
+// closed resp's body and closed hop's body, as following a redirect does. A
+// first request whose body cannot be replayed is not restarted.
 func (r *hintRestarts) restart(hop *Request, resp *Response) *Request {
 	if !r.allows(hop, resp) {
 		return nil
@@ -66,7 +77,7 @@ func (r *hintRestarts) restart(hop *Request, resp *Response) *Request {
 
 	r.record(hop)
 
-	resp.closeBody()
+	drainAndClose(resp)
 	hop.closeBody()
 
 	return first
@@ -124,12 +135,35 @@ func (r *hintRestarts) firstRequest() (*Request, bool) {
 }
 
 // callerHeader returns a copy of the first request's Header as the caller
-// set it: the copy taken before the first send when the Client has a Jar,
-// and the request's own Header, which nothing has changed, otherwise.
+// set it: a copy of its Header with the Cookie field restored to the
+// caller's, which drops the cookies a Jar added.
 func (r *hintRestarts) callerHeader() Header {
-	if r.jarHeader != nil {
-		return r.jarHeader.Clone()
+	header := r.first.Header.Clone()
+	if header == nil {
+		return nil
 	}
 
-	return r.first.Header.Clone()
+	if r.hadCookie {
+		header["Cookie"] = slices.Clone(r.cookie)
+	} else {
+		delete(header, "Cookie")
+	}
+
+	return header
+}
+
+// drainAndClose closes the body of resp after reading up to maxRestartDrain
+// bytes of it, as Client.do does with a redirect response, so a small body
+// leaves its HTTP/1.1 connection reusable. Read errors are ignored: a
+// connection that fails to drain is not reused anyway.
+func drainAndClose(resp *Response) {
+	if resp.Body == nil {
+		return
+	}
+
+	if resp.ContentLength == -1 || resp.ContentLength <= maxRestartDrain {
+		_, _ = io.CopyN(io.Discard, resp.Body, maxRestartDrain)
+	}
+
+	_ = resp.Body.Close()
 }

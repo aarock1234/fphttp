@@ -7,6 +7,8 @@ import (
 	"maps"
 	"regexp"
 	"strings"
+
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
 
 // Brave declares its network feature overrides in one of two brave-core
@@ -46,7 +48,7 @@ var (
 // braveOverrides returns the feature defaults Brave replaces at tag, read
 // from both its features patch and its OVERRIDE_FEATURE_DEFAULT_STATES
 // list. A release without one of the files overrides nothing there.
-func braveOverrides(ctx context.Context, sources *fetcher, tag string) (featureOverrides, error) {
+func braveOverrides(ctx context.Context, sources *releasefetch.Fetcher, tag string) (featureOverrides, error) {
 	patch, err := fetchBraveFile(ctx, sources, tag, braveFeaturesPatch)
 	if err != nil {
 		return nil, err
@@ -70,9 +72,9 @@ func braveOverrides(ctx context.Context, sources *fetcher, tag string) (featureO
 
 // fetchBraveFile returns the text of path in brave-core at tag, or "" when
 // the release has no such file.
-func fetchBraveFile(ctx context.Context, sources *fetcher, tag, path string) (string, error) {
-	body, err := sources.fetch(ctx, braveCoreURL+tag+"/"+path)
-	if isNotFound(err) {
+func fetchBraveFile(ctx context.Context, sources *releasefetch.Fetcher, tag, path string) (string, error) {
+	body, err := sources.Fetch(ctx, braveCoreURL+tag+"/"+path)
+	if releasefetch.IsNotFound(err) {
 		return "", nil
 	}
 

@@ -55,8 +55,8 @@ type chromiumRequest struct {
 // them, from Blink's resource_fetcher.cc and resource_request_utils.cc and
 // the browser's navigation and worker loaders.
 //
-// Service worker scripts, object, and embed are absent because their
-// request construction was not traced.
+// Service worker scripts are absent because their request construction was
+// not traced.
 var chromiumRequests = map[fetchDestination]chromiumRequest{
 	// Main-frame and subframe navigations are always HIGHEST.
 	destinationDocument: {
@@ -64,6 +64,16 @@ var chromiumRequests = map[fetchDestination]chromiumRequest{
 		incremental: true,
 	},
 	destinationSubframe: {
+		priority:    chromiumHighest,
+		incremental: true,
+	},
+
+	// Object and embed elements load into a content frame, a navigation.
+	destinationObject: {
+		priority:    chromiumHighest,
+		incremental: true,
+	},
+	destinationEmbed: {
 		priority:    chromiumHighest,
 		incremental: true,
 	},

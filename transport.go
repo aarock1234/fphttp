@@ -44,23 +44,17 @@ import (
 // as directed by the environment variables HTTP_PROXY, HTTPS_PROXY
 // and NO_PROXY (or the lowercase versions thereof, which take
 // precedence over the uppercase versions).
-var DefaultTransport RoundTripper = newDefaultTransport()
-
-// newDefaultTransport returns a new Transport with the settings of
-// DefaultTransport. fphttp: NewClient builds its transports with it too.
-func newDefaultTransport() *Transport {
-	return &Transport{
-		Proxy: ProxyFromEnvironment,
-		DialContext: defaultTransportDialContext(&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}),
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
+var DefaultTransport RoundTripper = &Transport{
+	Proxy: ProxyFromEnvironment,
+	DialContext: defaultTransportDialContext(&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}),
+	ForceAttemptHTTP2:     true,
+	MaxIdleConns:          100,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
 }
 
 // DefaultMaxIdleConnsPerHost is the default value of [Transport]'s
@@ -330,7 +324,9 @@ type Transport struct {
 	// uses Go's TLS and HTTP behavior. The Transport deep-copies Profile on first
 	// use; later changes to the Profile are ignored. See [TLSProfile] for how
 	// Profile shares TLS settings with TLSClientConfig, DialTLSContext, and
-	// HTTPS proxies. A Profile cannot be combined with HTTP/3.
+	// HTTPS proxies. A Profile cannot be combined with HTTP/3 in Protocols,
+	// an "h2" entry in TLSNextProto, or an HTTP/2 transport from
+	// golang.org/x/net/http2; such a Transport fails every request.
 	Profile *Profile
 }
 
@@ -1840,9 +1836,10 @@ func (pconn *persistConn) addTLS(ctx context.Context, addr string, trace *httptr
 	return pconn.addTLSWithConfig(ctx, cfg, trace)
 }
 
-// HTTPS proxies carry HTTP/1.1 requests or CONNECT tunnels. Their outer TLS
-// connection uses crypto/tls, never the profile's ClientHello, and must not
-// negotiate HTTP/2.
+// With a Profile, HTTPS proxies carry HTTP/1.1 requests or CONNECT tunnels.
+// Their outer TLS connection uses crypto/tls, never the profile's
+// ClientHello, and must not negotiate HTTP/2. Without a Profile, proxies use
+// addTLS, as upstream does.
 func (pconn *persistConn) addProxyTLS(ctx context.Context, addr string, trace *httptrace.ClientTrace) error {
 	cfg, err := pconn.t.tlsConfigForDial(addr)
 	if err != nil {
@@ -1996,7 +1993,7 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod, isClientConn
 		}
 		pconn.conn = conn
 		if cm.scheme() == "https" {
-			if cm.proxyURL != nil {
+			if cm.proxyURL != nil && t.profileState.snapshot != nil { // fphttp: a profile's HTTPS proxy speaks HTTP/1.1
 				err = pconn.addProxyTLS(ctx, cm.addr(), trace)
 			} else {
 				err = pconn.addTLS(ctx, cm.addr(), trace)

@@ -138,14 +138,16 @@ func (e Entry) Accept(destination string) string {
 	}
 }
 
-// chromiumAccept returns Chromium's Accept. Stylesheets and XSLT share one
-// value; every other subresource and worker sends */*. Object, embed, and
-// report requests were not traced and keep fphttp v1's */*.
+// chromiumAccept returns Chromium's Accept. Frame navigations, including
+// the content frames of object and embed elements, send the frame value;
+// stylesheets and XSLT share one value; every other subresource and worker
+// sends */*. Report requests were not traced and keep fphttp v1's */*.
 func (e Entry) chromiumAccept(destination fetchDestination) string {
-	switch destination {
-	case destinationDocument, destinationSubframe:
+	if destination.chromiumNavigation() {
 		return e.chromiumFrameAccept()
+	}
 
+	switch destination {
 	case destinationImage:
 		if e.chromiumMajor() >= chromiumJXLMajor {
 			return chromiumImageAccept155

@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"maps"
 	"slices"
+
+	"github.com/aarock1234/fphttp/v2/internal/releaseversion"
 )
 
 // buildLine identifies the builds of one browser major version on one
@@ -43,7 +45,7 @@ func newestBuilds(releases []release) []release {
 // than once keeps its earliest date, and the engine settles any remaining tie
 // so the result never depends on feed order.
 func supersedes(candidate, current release) bool {
-	if order := compareVersions(candidate.version, current.version); order != 0 {
+	if order := releaseversion.Compare(candidate.version, current.version); order != 0 {
 		return order > 0
 	}
 
@@ -59,6 +61,6 @@ func compareTableOrder(a, b release) int {
 	return cmp.Or(
 		cmp.Compare(a.browser, b.browser),
 		cmp.Compare(a.platform, b.platform),
-		compareVersions(a.version, b.version),
+		releaseversion.Compare(a.version, b.version),
 	)
 }

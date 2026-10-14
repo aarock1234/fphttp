@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -50,4 +51,15 @@ func (w window) includes(released time.Time) bool {
 // whitespace between its words.
 func parseLongDate(text string) (time.Time, error) {
 	return time.Parse(longDateLayout, strings.Join(strings.Fields(text), " "))
+}
+
+// warnUnreadableDate logs a release that a feed lists with a date this tool
+// cannot parse. The caller skips the release, so a date format change shows
+// up in the log instead of silently shrinking the generated table.
+func warnUnreadableDate(feed, version string, err error) {
+	slog.Warn("skipping release with an unreadable date",
+		slog.String("feed", feed),
+		slog.String("version", version),
+		slog.Any("error", err),
+	)
 }

@@ -7,30 +7,29 @@ import (
 	"github.com/aarock1234/fphttp/v2/internal/fingerprint"
 )
 
-// priority applies how the release prioritizes a request for its
-// Destination (catalog Entry.Priority): the HTTP/2 HEADERS priority and the
-// extensible Priority field.
-func (g *fieldGenerator) priority() {
-	priority := g.entry.Priority(g.destination())
-
-	g.http2Priority(priority.HTTP2)
-	g.priorityField(priority)
-}
-
-// http2Priority gives a request whose H2Priority is nil the HEADERS priority
-// the release uses for its Destination.
+// selectHTTP2Priority gives a prepared request whose H2Priority is nil the
+// HTTP/2 HEADERS priority the release uses for its Destination (catalog
+// Entry.Priority). It runs whether or not the profile generates fields,
+// because the HEADERS priority is part of the HTTP/2 wire, not a field.
 //
 // A top-level page load keeps a nil H2Priority, which the HTTP/2 transport
 // resolves to Profile.HTTP2.HeaderPriority, the document priority. Other
 // destinations take the catalog's priority while it describes the profile
 // (see usesCatalogPriorities), and otherwise keep the document priority too.
-func (g *fieldGenerator) http2Priority(priority fingerprint.Priority) {
-	request := g.request
-	if request.H2Priority != nil || request.Destination.topLevel() || !g.catalogPriorities {
+func (t *Transport) selectHTTP2Priority(request *Request) {
+	state := &t.profileState
+	if request.H2Priority != nil || request.Destination.topLevel() || !state.catalogPriorities {
 		return
 	}
 
+	priority := state.snapshot.entry.Priority(string(request.Destination)).HTTP2
 	request.H2Priority = &priority
+}
+
+// priority adds the extensible Priority field the release sends for the
+// request's Destination (catalog Entry.Priority).
+func (g *fieldGenerator) priority() {
+	g.priorityField(g.entry.Priority(g.destination()))
 }
 
 // priorityField adds the release's extensible Priority field (RFC 9218) for

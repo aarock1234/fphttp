@@ -21,11 +21,16 @@ import (
 // An Accept-Encoding taken from the profile is recorded like a generated
 // one, because the response is then encoded as the profile asked, not as
 // the caller asked (see decodeResponse).
+//
+// A request with an H2PriorityHeader sets its own Priority, so the
+// profile's Priority, even an empty one that suppresses the field, never
+// replaces or removes it. The field generator treats H2PriorityHeader the
+// same way (see fieldGenerator.priorityField).
 func layerProfileHeader(request *Request, profile Header, chain []*Request) {
 	sensitiveAllowed := staysOnFirstHost(chain)
 
 	for name, values := range profile {
-		if _, set := request.Header[name]; set {
+		if requestSetsField(request, name) {
 			continue
 		}
 
@@ -39,6 +44,16 @@ func layerProfileHeader(request *Request, profile Header, chain []*Request) {
 			request.profileHop.acceptEncoding = true
 		}
 	}
+}
+
+// requestSetsField reports whether the request sets the canonical field
+// name itself. An H2PriorityHeader sets Priority.
+func requestSetsField(request *Request, name string) bool {
+	if _, set := request.Header[name]; set {
+		return true
+	}
+
+	return name == "Priority" && request.H2PriorityHeader != ""
 }
 
 // sensitiveProfileField reports whether the canonical field name carries

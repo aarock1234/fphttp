@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aarock1234/fphttp/v2/internal/catalog"
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
 
 // Chromium source files the derivation reads, relative to the repository
@@ -93,16 +94,16 @@ type chromiumSource struct {
 // fetchChromiumSource reads the files every Chromium derivation needs at
 // tag, and ssl_config_service_defaults.cc as well when the socket takes its
 // ECH mode from the config service.
-func fetchChromiumSource(ctx context.Context, sources *fetcher, tag string) (chromiumSource, error) {
+func fetchChromiumSource(ctx context.Context, sources *releasefetch.Fetcher, tag string) (chromiumSource, error) {
 	revision := chromiumRevision(tag)
 
-	files, err := sources.fetchFiles(ctx, revision, chromiumSourcePaths)
+	files, err := fetchFiles(ctx, sources, revision, chromiumSourcePaths)
 	if err != nil {
 		return chromiumSource{}, err
 	}
 
 	if strings.Contains(files[chromiumSocketPath], "EchMode::kOpportunistic") {
-		defaults, err := sources.fetchFile(ctx, revision, chromiumSSLDefaultsPath)
+		defaults, err := fetchFile(ctx, sources, revision, chromiumSSLDefaultsPath)
 		if err != nil {
 			return chromiumSource{}, err
 		}
@@ -120,7 +121,7 @@ func fetchChromiumSource(ctx context.Context, sources *fetcher, tag string) (chr
 
 // verifyChromium derives Chrome's wire for a target's major and compares it
 // with every Chrome and Edge release of that major.
-func verifyChromium(ctx context.Context, sources *fetcher, t target) []finding {
+func verifyChromium(ctx context.Context, sources *releasefetch.Fetcher, t target) []finding {
 	source, err := fetchChromiumSource(ctx, sources, t.representative.Version)
 	if err != nil {
 		return []finding{t.derivationFinding(err)}
@@ -134,7 +135,7 @@ func verifyChromium(ctx context.Context, sources *fetcher, t target) []finding {
 // store is fetched once, and only when Trust Anchor IDs are enabled.
 func checkChromiumWires(
 	ctx context.Context,
-	sources *fetcher,
+	sources *releasefetch.Fetcher,
 	t target,
 	source chromiumSource,
 	overrides featureOverrides,

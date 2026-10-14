@@ -244,11 +244,14 @@ every redirect hop.
 | -------------------------------------------------------------------------- | --------------------------------------------- | ---------------- | ------------------------------ |
 | Zero value, `DestinationDocument`                                          | A page load: typing a URL or following a link | `navigate`       | Yes                            |
 | `DestinationIframe`, `DestinationFrame`                                    | A page inside a frame                         | `navigate`       | Yes                            |
-| `DestinationEmpty`                                                         | `fetch()` and `XMLHttpRequest`                | `cors`           | Only to the initiator's origin |
+| `DestinationEmpty`                                                         | `fetch()` and `XMLHttpRequest`                | `cors`           | Same origin as `Initiator`     |
 | `DestinationScript`, `DestinationStyle`, `DestinationImage`                | Scripts, style sheets, and images             | `no-cors`        | Yes                            |
-| `DestinationFont`, `DestinationManifest`                                   | Web fonts and app manifests                   | `cors`           | Only to the initiator's origin |
+| `DestinationFont`, `DestinationManifest`                                   | Web fonts and app manifests                   | `cors`           | Same origin as `Initiator`     |
 | `DestinationAudio`, `DestinationVideo`                                     | Media; Chromium also sends `Range: bytes=0-`  | `no-cors`        | Yes                            |
-| `DestinationWorker`, `DestinationSharedWorker`, `DestinationServiceWorker` | Worker scripts                                | `same-origin`    | Only to the initiator's origin |
+| `DestinationWorker`, `DestinationSharedWorker`, `DestinationServiceWorker` | Worker scripts                                | `same-origin`    | Same origin as `Initiator`     |
+
+Those same origin rows treat a nil `Initiator` as a request the user started, so it gets cookies from
+`Client.Jar` on any host.
 
 Only page loads send `Sec-Fetch-User: ?1`. For a navigation started by a script, set `Sec-Fetch-User` to an empty
 value. Set `Initiator` to the page's full URL rather than its origin, because `Referer` comes from it. A

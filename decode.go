@@ -24,6 +24,21 @@ var errConcurrentDecodedRead = errors.New("fphttp: concurrent read on decoded re
 // HTTP/1.1 connection can be reused. Anything longer is left unread.
 const maxUndecodedTail = 2 << 10
 
+// maxContentCodings is the most content codings a response may stack for
+// fphttp to decode it. Each coding costs a decoder, so a hostile
+// Content-Encoding listing thousands would otherwise cost gigabytes before
+// any content arrives. Firefox applies at most 16 codings, and real servers
+// apply one; a response listing more is left encoded, as for a coding
+// fphttp does not decode.
+const maxContentCodings = 16
+
+// maxZstdWindow is the largest window a zstd frame may declare, 8 MiB. RFC
+// 9659 limits the zstd content coding to it, and browsers enforce it, so a
+// browser rejects any frame that needs more. Without the limit, a frame
+// header of a few bytes could make the decoder allocate 512 MiB. A frame
+// over the limit fails from Read.
+const maxZstdWindow = 8 << 20
+
 // decodeResponse makes resp's Body yield the content the server encoded,
 // when every content coding that Content-Encoding lists is one fphttp
 // decodes: gzip, x-gzip, deflate, br, zstd, or identity. It then deletes
@@ -69,7 +84,8 @@ func decodeResponse(resp *Response) {
 // contentCodings returns the content codings that Content-Encoding field
 // values list, lowercased and in the order the server applied them. It
 // leaves out identity, which changes nothing, and empty list members. It
-// reports false when a coding is not one fphttp decodes.
+// reports false when a coding is not one fphttp decodes, or when there are
+// more than maxContentCodings.
 func contentCodings(values []string) ([]string, bool) {
 	var codings []string
 
@@ -82,6 +98,10 @@ func contentCodings(values []string) ([]string, bool) {
 				continue
 
 			case "gzip", "x-gzip", "deflate", "br", "zstd":
+				if len(codings) == maxContentCodings {
+					return nil, false
+				}
+
 				codings = append(codings, coding)
 
 			default:
@@ -303,7 +323,7 @@ func (c *decoderChain) push(coding string) error {
 		c.reader = brotli.NewReader(c.reader)
 
 	case "zstd":
-		decoder, err := zstd.NewReader(c.reader, zstd.WithDecoderConcurrency(1))
+		decoder, err := newZstdReader(c.reader)
 		if err != nil {
 			return err
 		}
@@ -346,6 +366,17 @@ func (c *decoderChain) close() {
 	}
 
 	c.releases = nil
+}
+
+// newZstdReader returns a decoder of the zstd content coding that decodes
+// on the calling goroutine and refuses frames whose window exceeds
+// maxZstdWindow.
+func newZstdReader(r io.Reader) (*zstd.Decoder, error) {
+	return zstd.NewReader(
+		r,
+		zstd.WithDecoderConcurrency(1),
+		zstd.WithDecoderMaxWindow(maxZstdWindow),
+	)
 }
 
 // newDeflateReader returns a decoder of the deflate content coding. The

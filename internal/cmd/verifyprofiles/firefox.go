@@ -10,6 +10,7 @@ import (
 	utls "github.com/refraction-networking/utls"
 
 	"github.com/aarock1234/fphttp/v2/internal/catalog"
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
 
 // Firefox source files the derivation reads, relative to the repository
@@ -129,7 +130,7 @@ func firefoxRevision(version string, esr bool) sourceRevision {
 
 // verifyFirefox derives the wire of a target's Firefox release and compares
 // it with every release of that major on the target's platforms.
-func verifyFirefox(ctx context.Context, sources *fetcher, t target) []finding {
+func verifyFirefox(ctx context.Context, sources *releasefetch.Fetcher, t target) []finding {
 	revision := firefoxRevision(t.representative.Version, t.key.family == familyFirefoxESR)
 
 	paths := firefoxSourcePaths
@@ -137,7 +138,7 @@ func verifyFirefox(ctx context.Context, sources *fetcher, t target) []finding {
 		paths = slices.Concat(firefoxSourcePaths, []string{geckoViewPrefsPath})
 	}
 
-	files, err := sources.fetchFiles(ctx, revision, paths)
+	files, err := fetchFiles(ctx, sources, revision, paths)
 	if err != nil {
 		return []finding{t.derivationFinding(err)}
 	}
@@ -271,8 +272,8 @@ func derivePushMaxConcurrent(prefs *preferenceReader, session string) bool {
 // preference really adds the ML-DSA signature schemes, as the policy in
 // nsNSSComponent.cpp and EnabledSignatureSchemes.h did when it was
 // introduced.
-func checkMLDSAPolicy(ctx context.Context, sources *fetcher, revision sourceRevision) error {
-	files, err := sources.fetchFiles(ctx, revision, []string{
+func checkMLDSAPolicy(ctx context.Context, sources *releasefetch.Fetcher, revision sourceRevision) error {
+	files, err := fetchFiles(ctx, sources, revision, []string{
 		firefoxComponentPath,
 		firefoxSignaturesPath,
 	})

@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
 
 // collector gathers published browser releases from official release feeds.
 // Every collector method returns only releases published inside window.
 type collector struct {
-	fetcher *fetcher
+	fetcher *releasefetch.Fetcher
 	window  window
 }
 

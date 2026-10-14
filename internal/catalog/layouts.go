@@ -11,6 +11,11 @@ package catalog
 // Connection, Proxy-Connection, Transfer-Encoding) on the wire. Every slice
 // and map here is shared by all wires of its family and must not be
 // modified.
+//
+// The fields a browser appends after every other field on HTTP/2 only,
+// Chromium's Priority and Firefox's Te, are deliberately not listed: the
+// HTTP/2 transport encodes unlisted added fields after every other field,
+// listed or not, as the browsers do.
 
 // Pseudo-header orders.
 var (
@@ -44,7 +49,8 @@ var (
 // the network prefix (Host, Connection, cache directives, authorization),
 // client hints, Accept-Language, renderer fields, DNT and Sec-GPC,
 // Upgrade-Insecure-Requests, User-Agent, Origin, Accept, fetch metadata,
-// then the network tail. It matches the Chrome 148 Windows capture.
+// then the network tail. It matches the Chrome 148 Windows capture, whose
+// HTTP/2 Priority follows these fields.
 //
 // Accept-Language sits early, as in the Chrome 148 and 154 captures; the
 // compiled default without the ReduceAcceptLanguage field trial would
@@ -103,7 +109,6 @@ var chromiumNavigationOrder = []string{
 	"Cookie",
 	"If-None-Match",
 	"If-Modified-Since",
-	"Priority",
 }
 
 // chromiumSubresourceOrder is the order of a renderer subresource request:
@@ -172,7 +177,6 @@ var chromiumSubresourceOrder = []string{
 	"Cookie",
 	"If-None-Match",
 	"If-Modified-Since",
-	"Priority",
 }
 
 // chromiumHeaderCase spells the fields Chromium does not write in canonical
@@ -219,8 +223,8 @@ var chromiumHeaderCase = map[string]string{
 // standard fields, loader fields (Referer, upload fields), BeginConnect
 // fields (storage access from 147, Origin, DNT, Sec-GPC, authorization,
 // Connection), Cookie, Upgrade-Insecure-Requests and fetch metadata, cache
-// validators, Priority (from 126), cache directives, and Te, which Firefox
-// appends last on HTTP/2 only.
+// validators, Priority (from 126), and cache directives. Te, which Firefox
+// appends last on HTTP/2 only, is left to the HTTP/2 transport.
 //
 // The positions of Content-Type and Content-Length on form-POST navigations
 // and of Proxy-Authorization are not verified; they follow the subresource
@@ -252,7 +256,6 @@ var firefoxNavigationOrder = []string{
 	"Priority",
 	"Pragma",
 	"Cache-Control",
-	"Te",
 }
 
 // firefoxSubresourceOrder is Firefox's field insertion order for fetch,
@@ -287,7 +290,6 @@ var firefoxSubresourceOrder = []string{
 	"Priority",
 	"Pragma",
 	"Cache-Control",
-	"Te",
 }
 
 // firefoxHeaderCase spells the fields Firefox does not write in canonical

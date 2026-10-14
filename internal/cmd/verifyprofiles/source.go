@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
 
 // sourceRevision is one tagged revision of a browser's source repository.
@@ -21,16 +23,16 @@ type sourceRevision struct {
 type sourceFiles map[string]string
 
 // fetchFile returns the text of one file of revision.
-func (f *fetcher) fetchFile(ctx context.Context, revision sourceRevision, path string) (string, error) {
+func fetchFile(ctx context.Context, sources *releasefetch.Fetcher, revision sourceRevision, path string) (string, error) {
 	var notFound error
 
 	for _, mirror := range revision.mirrors {
-		body, err := f.fetch(ctx, mirror+path)
+		body, err := sources.Fetch(ctx, mirror+path)
 		if err == nil {
 			return string(body), nil
 		}
 
-		if !isNotFound(err) {
+		if !releasefetch.IsNotFound(err) {
 			return "", fmt.Errorf("%s %s: %w", revision.name, path, err)
 		}
 
@@ -42,11 +44,11 @@ func (f *fetcher) fetchFile(ctx context.Context, revision sourceRevision, path s
 
 // fetchFiles returns the text of every path of revision, or the first
 // failure.
-func (f *fetcher) fetchFiles(ctx context.Context, revision sourceRevision, paths []string) (sourceFiles, error) {
+func fetchFiles(ctx context.Context, sources *releasefetch.Fetcher, revision sourceRevision, paths []string) (sourceFiles, error) {
 	files := make(sourceFiles, len(paths))
 
 	for _, path := range paths {
-		text, err := f.fetchFile(ctx, revision, path)
+		text, err := fetchFile(ctx, sources, revision, path)
 		if err != nil {
 			return nil, err
 		}

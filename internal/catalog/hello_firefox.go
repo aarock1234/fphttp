@@ -13,14 +13,14 @@ import (
 func firefoxHello(features *FirefoxWire) (*utls.ClientHelloSpec, error) {
 	spec, err := utls.UTLSIdToSpec(utls.HelloFirefox_120)
 	if err != nil {
-		return nil, fmt.Errorf("fphttp: construct Firefox hello: %w", err)
+		return nil, fmt.Errorf("construct Firefox hello: %w", err)
 	}
 
 	spec.CipherSuites = slices.DeleteFunc(spec.CipherSuites, func(cipher uint16) bool {
 		return slices.Contains(features.DisabledCiphers, cipher)
 	})
 
-	extensions := make([]utls.TLSExtension, 0, len(spec.Extensions)+2)
+	extensions := make([]utls.TLSExtension, 0, len(spec.Extensions)+3)
 	for _, extension := range spec.Extensions {
 		switch extension := extension.(type) {
 		case *utls.SupportedCurvesExtension:
@@ -55,6 +55,14 @@ func firefoxHello(features *FirefoxWire) (*utls.ClientHelloSpec, error) {
 
 		extensions = append(extensions, extension)
 	}
+
+	// NSS pads every initial ClientHello of 256 to 511 bytes up to 512 with
+	// a trailing padding extension (ssl_InsertPaddingExtension), the same
+	// rule as BoringSSL. Only the wires without ECH GREASE are short enough
+	// to be padded; the extension writes nothing for longer hellos.
+	extensions = append(extensions, &utls.UtlsPaddingExtension{
+		GetPaddingLen: utls.BoringPaddingStyle,
+	})
 
 	spec.Extensions = extensions
 

@@ -33,7 +33,7 @@ type mozillaRelease struct {
 // platforms. An "esr" suffix on the release ID marks an ESR build, which
 // keeps its ESR identity even when its number matches a release build.
 func (c *collector) firefoxDesktop(ctx context.Context) ([]release, error) {
-	history, err := c.fetcher.fetchJSON[mozillaProductDetails](ctx, firefoxDesktopURL)
+	history, err := c.fetcher.FetchJSON[mozillaProductDetails](ctx, firefoxDesktopURL)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func (c *collector) firefoxDesktop(ctx context.Context) ([]release, error) {
 // firefox-android product shares its version with Gecko; the earlier Fenix
 // and Fennec products have no published engine build and are skipped.
 func (c *collector) firefoxAndroid(ctx context.Context) ([]release, error) {
-	history, err := c.fetcher.fetchJSON[mozillaProductDetails](ctx, firefoxAndroidURL)
+	history, err := c.fetcher.FetchJSON[mozillaProductDetails](ctx, firefoxAndroidURL)
 	if err != nil {
 		return nil, err
 	}
@@ -106,14 +106,21 @@ func (c *collector) firefoxAndroid(ctx context.Context) ([]release, error) {
 }
 
 // includedMozillaRelease returns the release date of entry and whether it is
-// a published build of product inside the window.
+// a published build of product inside the window. It excludes, with a
+// warning, a build whose date it cannot parse.
 func (c *collector) includedMozillaRelease(entry mozillaRelease, product string) (time.Time, bool) {
 	if entry.Product != product || entry.Category == "dev" {
 		return time.Time{}, false
 	}
 
 	released, err := time.Parse(time.DateOnly, entry.Date)
-	if err != nil || !c.window.includes(released) {
+	if err != nil {
+		warnUnreadableDate(product, entry.Version, err)
+
+		return time.Time{}, false
+	}
+
+	if !c.window.includes(released) {
 		return time.Time{}, false
 	}
 

@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/aarock1234/fphttp/v2/internal/releasefetch"
 )
 
 // trustAnchorPattern matches one trust anchor ID in the Chrome Root Store
@@ -19,8 +21,8 @@ var trustAnchorPattern = regexp.MustCompile(`trust_anchor_id:\s*"((?:\\x[a-fA-F0
 // fetchTrustAnchorIDs returns the Trust Anchor IDs of the root store bundled
 // with a Chromium revision, sorted bytewise as the catalog stores them.
 // Chrome iterates an unordered set, so only the set is meaningful.
-func fetchTrustAnchorIDs(ctx context.Context, sources *fetcher, revision sourceRevision) ([][]byte, error) {
-	rootStore, err := sources.fetchFile(ctx, revision, chromiumRootStorePath)
+func fetchTrustAnchorIDs(ctx context.Context, sources *releasefetch.Fetcher, revision sourceRevision) ([][]byte, error) {
+	rootStore, err := fetchFile(ctx, sources, revision, chromiumRootStorePath)
 	if err != nil {
 		return nil, err
 	}

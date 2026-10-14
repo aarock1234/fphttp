@@ -86,6 +86,14 @@ func (d fetchDestination) navigation() bool {
 	return d == destinationDocument || d == destinationSubframe
 }
 
+// chromiumNavigation reports whether Chromium loads the destination as a
+// frame navigation: a document, a subframe, or the content frame of an
+// object or embed element (GetDestinationFromFrameTreeNode in
+// navigation_request.cc).
+func (d fetchDestination) chromiumNavigation() bool {
+	return d.navigation() || d == destinationObject || d == destinationEmbed
+}
+
 // media reports whether the destination is an audio or video element load.
 func (d fetchDestination) media() bool {
 	return d == destinationAudio || d == destinationVideo

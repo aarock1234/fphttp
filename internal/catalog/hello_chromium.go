@@ -30,12 +30,12 @@ func (h ChromiumHello) clientHelloID() (utls.ClientHelloID, bool) {
 func chromiumHello(features *ChromiumWire) (*utls.ClientHelloSpec, error) {
 	helloID, ok := features.Hello.clientHelloID()
 	if !ok {
-		return nil, fmt.Errorf("fphttp: unknown Chromium hello %d", features.Hello)
+		return nil, fmt.Errorf("unknown Chromium hello %d", features.Hello)
 	}
 
 	spec, err := utls.UTLSIdToSpec(helloID)
 	if err != nil {
-		return nil, fmt.Errorf("fphttp: construct Chromium hello: %w", err)
+		return nil, fmt.Errorf("construct Chromium hello: %w", err)
 	}
 
 	for index, extension := range spec.Extensions {

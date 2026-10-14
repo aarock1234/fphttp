@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/aarock1234/fphttp/v2/internal/releaseversion"
 )
 
 const (
@@ -62,7 +64,7 @@ type safariNote struct {
 // safari collects every Safari release from Apple's release notes. Apple
 // does not publish a separate engine build, so the engine stays empty.
 func (c *collector) safari(ctx context.Context) ([]release, error) {
-	index, err := c.fetcher.fetchJSON[appleDocument](ctx, safariIndexURL)
+	index, err := c.fetcher.FetchJSON[appleDocument](ctx, safariIndexURL)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +116,7 @@ func safariNotes(index appleDocument) []safariNote {
 	}
 
 	slices.SortFunc(notes, func(a, b safariNote) int {
-		return compareVersions(a.version, b.version)
+		return releaseversion.Compare(a.version, b.version)
 	})
 
 	return notes
@@ -134,7 +136,7 @@ func safariVersion(name string) string {
 // returns the zero time with a warning when the page states no date, or
 // when its abstract names a different version than its title.
 func (c *collector) safariReleaseDate(ctx context.Context, note safariNote) (time.Time, error) {
-	document, err := c.fetcher.fetchJSON[appleDocument](ctx, note.pageURL)
+	document, err := c.fetcher.FetchJSON[appleDocument](ctx, note.pageURL)
 	if err != nil {
 		return time.Time{}, err
 	}

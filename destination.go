@@ -54,10 +54,12 @@ const (
 	// DestinationManifest is a web app manifest.
 	DestinationManifest Destination = "manifest"
 
-	// DestinationObject is the resource of an object element.
+	// DestinationObject is the resource of an object element, which browsers
+	// load into a content frame as a nested navigation.
 	DestinationObject Destination = "object"
 
-	// DestinationEmbed is the resource of an embed element.
+	// DestinationEmbed is the resource of an embed element, which browsers
+	// load into a content frame as a nested navigation.
 	DestinationEmbed Destination = "embed"
 
 	// DestinationWorker is a dedicated worker script.
@@ -152,11 +154,17 @@ func (d Destination) validate() error {
 }
 
 // navigation reports whether d loads a document into a frame: a top-level
-// page load, or an iframe or frame load. Navigations use mode navigate,
-// include credentials, and are ordered by Profile.HeaderOrder.
+// page load, an iframe or frame load, or the content frame of an object or
+// embed element. Navigations use mode navigate, include credentials, and
+// are ordered by Profile.HeaderOrder.
 func (d Destination) navigation() bool {
 	switch d {
-	case "", DestinationDocument, DestinationIframe, DestinationFrame:
+	case "",
+		DestinationDocument,
+		DestinationIframe,
+		DestinationFrame,
+		DestinationObject,
+		DestinationEmbed:
 		return true
 	default:
 		return false
@@ -205,19 +213,27 @@ func (d Destination) mode() fetchMode {
 }
 
 // credentials returns the credentials mode a browser uses for d.
-// fetch(), fonts, manifests, and worker scripts use same-origin; navigations
-// and every other subresource use include. An invalid Destination omits
-// credentials, so a Client never applies its Jar to a request whose kind it
-// cannot tell.
+// fetch(), fonts, reports, and worker scripts use same-origin; manifests
+// omit credentials; navigations and every other subresource use include. An
+// invalid Destination omits credentials, so a Client never applies its Jar
+// to a request whose kind it cannot tell.
+//
+// Chromium and Firefox fetch a manifest without credentials unless its link
+// is crossorigin="use-credentials", which a Destination cannot express.
+// Chromium sends violation reports with same-origin credentials
+// (PingLoader::SendViolationReport); Firefox sends them anonymously, so a
+// Firefox report to its own origin carries cookies it would not.
 func (d Destination) credentials() credentialsMode {
 	if !d.valid() {
 		return credentialsOmit
 	}
 
 	switch d {
+	case DestinationManifest:
+		return credentialsOmit
 	case DestinationEmpty,
 		DestinationFont,
-		DestinationManifest,
+		DestinationReport,
 		DestinationWorker,
 		DestinationSharedWorker,
 		DestinationServiceWorker:

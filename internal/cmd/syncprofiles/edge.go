@@ -63,12 +63,12 @@ type edgeDesktopNote struct {
 // current and archived release notes. Microsoft does not publish the
 // Chromium build of an Edge release, so the engine stays empty.
 func (c *collector) edgeDesktop(ctx context.Context) ([]release, error) {
-	current, err := c.fetcher.fetchText(ctx, edgeDesktopNotesURL)
+	current, err := c.fetcher.FetchText(ctx, edgeDesktopNotesURL)
 	if err != nil {
 		return nil, err
 	}
 
-	archives, err := mapConcurrently(ctx, edgeArchiveURLs(current), c.fetcher.fetchText)
+	archives, err := mapConcurrently(ctx, edgeArchiveURLs(current), c.fetcher.FetchText)
 	if err != nil {
 		return nil, err
 	}
@@ -104,9 +104,10 @@ func (c *collector) edgeDesktop(ctx context.Context) ([]release, error) {
 }
 
 // edgeAndroid collects Edge Android releases from Microsoft's current and
-// archived mobile release notes.
+// archived mobile release notes. It skips, with a warning, a release whose
+// date it cannot parse.
 func (c *collector) edgeAndroid(ctx context.Context) ([]release, error) {
-	pages, err := mapConcurrently(ctx, edgeMobileNotesURLs, c.fetcher.fetchText)
+	pages, err := mapConcurrently(ctx, edgeMobileNotesURLs, c.fetcher.FetchText)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +126,13 @@ func (c *collector) edgeAndroid(ctx context.Context) ([]release, error) {
 			}
 
 			released, err := parseLongDate(match[3])
-			if err != nil || !c.window.includes(released) {
+			if err != nil {
+				warnUnreadableDate("Edge Android", match[1], err)
+
+				continue
+			}
+
+			if !c.window.includes(released) {
 				continue
 			}
 
@@ -170,7 +177,8 @@ func edgeArchiveURLs(page string) []string {
 }
 
 // parseEdgeDesktopNotes returns every dated build heading of a desktop
-// release notes page.
+// release notes page. It skips, with a warning, a heading whose date it
+// cannot parse.
 func parseEdgeDesktopNotes(page string) []edgeDesktopNote {
 	headings := edgeHeadingPattern.FindAllStringSubmatchIndex(page, -1)
 
@@ -183,6 +191,8 @@ func parseEdgeDesktopNotes(page string) []edgeDesktopNote {
 
 		released, err := parseLongDate(match[2])
 		if err != nil {
+			warnUnreadableDate("Edge desktop", match[1], err)
+
 			continue
 		}
 
