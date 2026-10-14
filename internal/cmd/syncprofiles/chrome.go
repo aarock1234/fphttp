@@ -3,118 +3,114 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
-
-	http "github.com/aarock1234/fphttp/v2"
-	"github.com/aarock1234/fphttp/v2/browser"
 )
 
+// chromeFeedLimit is the most releases one chromiumdash query returns.
+const chromeFeedLimit = 1000
+
+// chromeRelease is one entry of a chromiumdash release feed.
 type chromeRelease struct {
-	Version  string `json:"version"`
-	Platform string `json:"platform"`
-	Channel  string `json:"channel"`
-	Time     int64  `json:"time"`
-	Hashes   struct {
-		Chromium string `json:"chromium"`
-	} `json:"hashes"`
+	Version string `json:"version"`
+
+	// Time is the publication time in Unix milliseconds.
+	Time int64 `json:"time"`
 }
 
-func (i *importer) chrome(ctx context.Context) ([]browser.Descriptor, error) {
-	platforms := []struct {
-		name string
-		id   http.Platform
-	}{
-		{
-			name: "Windows",
-			id:   http.PlatformWindows,
-		},
-		{
-			name: "Mac",
-			id:   http.PlatformMac,
-		},
-		{
-			name: "Linux",
-			id:   http.PlatformLinux,
-		},
-		{
-			name: "Android",
-			id:   http.PlatformAndroid,
-		},
-		{
-			name: "iOS",
-			id:   http.PlatformIOS,
-		},
-	}
-
-	var entries []browser.Descriptor
-	for _, platform := range platforms {
-		channels := []string{"Stable"}
-		if platform.id == http.PlatformWindows || platform.id == http.PlatformMac {
-			channels = append(channels, "Extended")
-		}
-		for _, channel := range channels {
-			url := "https://chromiumdash.appspot.com/fetch_releases?channel=" + channel + "&num=1000&platform=" + platform.name
-			releases, err := fetchJSON[[]chromeRelease](ctx, i, url)
-			if err != nil {
-				return nil, err
-			}
-			if len(releases) == 1000 {
-				oldest := time.UnixMilli(releases[len(releases)-1].Time)
-				if !oldest.Before(i.since) {
-					return nil, fmt.Errorf("Chrome %s exceeds API page capacity before cutoff; use milestone pagination", platform.name)
-				}
-			}
-			for _, release := range releases {
-				released := time.UnixMilli(release.Time)
-				if !i.includes(released) || !numericVersion(release.Version) {
-					continue
-				}
-				engine := release.Version
-				if platform.id == http.PlatformIOS {
-					engine = ""
-				}
-				channelName := "stable"
-				if channel == "Extended" {
-					channelName = "extended-stable"
-				}
-				entry := inventoryEntry(http.BrowserChrome, platform.id, release.Version, engine, channelName, released, browser.Source{
-					URL:      url,
-					Revision: release.Hashes.Chromium,
-					Note:     "Google ChromeDash published stable release; product version does not establish iOS WebKit/OS configuration.",
-				})
-				if source, known := chromeAnnouncement(release.Version); known {
-					entry.Sources = append(entry.Sources, source)
-				}
-				entries = append(entries, entry)
-				if platform.id == http.PlatformIOS {
-					entry.Platform = http.PlatformIPadOS
-					entry.ID = string(entry.Browser) + "/ipados/" + entry.Version + "/stable/source-default"
-					entries = append(entries, entry)
-				}
-			}
-		}
-	}
-
-	return entries, nil
+// chromePlatform names the chromiumdash feed of one platform.
+type chromePlatform struct {
+	feedName string
+	platform platform
 }
 
-// These announcements independently establish that the snapshot's newest early
-// Stable builds reached real users while the preceding major was maintained.
-func chromeAnnouncement(version string) (browser.Source, bool) {
-	var url string
-	switch version {
-	case "156.0.8078.12", "156.0.8078.13":
-		url = "https://chromereleases.googleblog.com/2026/10/early-stable-update-for-desktop.html"
-	case "156.0.8078.25":
-		url = "https://chromereleases.googleblog.com/2026/10/chrome-for-android-update_01286554645.html"
-	case "156.0.8078.33":
-		url = "https://chromereleases.googleblog.com/2026/10/chrome-stable-for-ios-update_01885421664.html"
-	default:
-		return browser.Source{}, false
+// chromePlatforms lists the platforms whose Chrome builds embed their own
+// Chromium network stack.
+var chromePlatforms = []chromePlatform{
+	{
+		feedName: "Windows",
+		platform: platformWindows,
+	},
+	{
+		feedName: "Mac",
+		platform: platformMac,
+	},
+	{
+		feedName: "Linux",
+		platform: platformLinux,
+	},
+	{
+		feedName: "Android",
+		platform: platformAndroid,
+	},
+}
+
+// chrome collects Stable channel Chrome releases from chromiumdash. Early
+// Stable builds are published on the Stable channel and count as stable.
+func (c *collector) chrome(ctx context.Context) ([]release, error) {
+	perPlatform, err := mapConcurrently(ctx, chromePlatforms, c.chromePlatform)
+	if err != nil {
+		return nil, err
 	}
 
-	return browser.Source{
-		URL:  url,
-		Note: "Google's announcement confirms publication to Stable users; early Stable remains a published Stable release rather than a future-version alias.",
-	}, true
+	return slices.Concat(perPlatform...), nil
+}
+
+// chromePlatform collects the Stable channel releases of one platform.
+func (c *collector) chromePlatform(ctx context.Context, target chromePlatform) ([]release, error) {
+	feedURL := fmt.Sprintf(
+		"https://chromiumdash.appspot.com/fetch_releases?channel=Stable&num=%d&platform=%s",
+		chromeFeedLimit,
+		target.feedName,
+	)
+
+	entries, err := c.fetcher.fetchJSON[[]chromeRelease](ctx, feedURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.checkChromeFeedReach(target, entries); err != nil {
+		return nil, err
+	}
+
+	var releases []release
+	for _, entry := range entries {
+		released := time.UnixMilli(entry.Time).UTC()
+		if !c.window.includes(released) || !numericVersion(entry.Version) {
+			continue
+		}
+
+		releases = append(releases, release{
+			browser:  browserChrome,
+			platform: target.platform,
+			version:  entry.Version,
+			engine:   entry.Version,
+			released: released,
+		})
+	}
+
+	return releases, nil
+}
+
+// checkChromeFeedReach fails when a full feed page does not reach back past
+// the start of the window, because older releases would be missing.
+func (c *collector) checkChromeFeedReach(target chromePlatform, entries []chromeRelease) error {
+	if len(entries) < chromeFeedLimit {
+		return nil
+	}
+
+	oldest := entries[0].Time
+	for _, entry := range entries {
+		oldest = min(oldest, entry.Time)
+	}
+
+	if time.UnixMilli(oldest).Before(c.window.since) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"chromiumdash %s feed holds %d releases without reaching -since; query each milestone instead",
+		target.feedName,
+		chromeFeedLimit,
+	)
 }

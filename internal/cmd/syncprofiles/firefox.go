@@ -2,119 +2,120 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
-
-	http "github.com/aarock1234/fphttp/v2"
-	"github.com/aarock1234/fphttp/v2/browser"
 )
 
-func (i *importer) firefox(ctx context.Context) ([]browser.Descriptor, error) {
-	productURL := "https://product-details.mozilla.org/1.0/firefox.json"
-	product, err := fetchJSON[mozillaReleaseHistory](ctx, i, productURL)
+const (
+	firefoxDesktopURL = "https://product-details.mozilla.org/1.0/firefox.json"
+	firefoxAndroidURL = "https://product-details.mozilla.org/1.0/mobile_android.json"
+)
+
+// mozillaProductDetails is a Mozilla product-details release history keyed
+// by release ID, such as "firefox-128.0esr".
+type mozillaProductDetails struct {
+	Releases map[string]mozillaRelease `json:"releases"`
+}
+
+// mozillaRelease is one release of a Mozilla product.
+type mozillaRelease struct {
+	Version string `json:"version"`
+	Product string `json:"product"`
+
+	// Category is "major", "stability", "esr", or "dev" for prereleases.
+	Category string `json:"category"`
+
+	Date string `json:"date"`
+}
+
+// firefoxDesktop collects Firefox release and ESR builds for desktop
+// platforms. An "esr" suffix on the release ID marks an ESR build, which
+// keeps its ESR identity even when its number matches a release build.
+func (c *collector) firefoxDesktop(ctx context.Context) ([]release, error) {
+	history, err := c.fetcher.fetchJSON[mozillaProductDetails](ctx, firefoxDesktopURL)
 	if err != nil {
 		return nil, err
 	}
-	historyURLs := []string{
-		"https://product-details.mozilla.org/1.0/firefox_history_major_releases.json",
-		"https://product-details.mozilla.org/1.0/firefox_history_stability_releases.json",
-	}
-	histories := make(map[string]map[string]string, len(historyURLs))
-	for _, url := range historyURLs {
-		history, err := fetchJSON[map[string]string](ctx, i, url)
-		if err != nil {
-			return nil, err
-		}
-		histories[url] = history
+
+	if len(history.Releases) == 0 {
+		return nil, errors.New("no releases in the Firefox product details; the format may have changed")
 	}
 
-	var entries []browser.Descriptor
-	for releaseID, release := range product.Releases {
-		version := strings.TrimSuffix(release.Version, "esr")
-		released, err := time.Parse(time.DateOnly, release.Date)
-		if err != nil || !i.includes(released) || !numericVersion(version) ||
-			release.Product != "firefox" || release.Category == "dev" {
+	var releases []release
+	for id, entry := range history.Releases {
+		released, included := c.includedMozillaRelease(entry, "firefox")
+		if !included {
 			continue
 		}
-		channel := "stable"
-		if strings.HasSuffix(releaseID, "esr") {
-			channel = "esr"
-		}
-		sources := []browser.Source{{
-			URL:      productURL,
-			Revision: releaseID,
-			Note:     "Mozilla Ship-It release identifiers distinguish stable and ESR builds, including initial ESR releases sharing a numeric product version.",
-		}}
-		for _, url := range historyURLs {
-			if histories[url][version] == release.Date {
-				sources = append(sources, browser.Source{
-					URL:  url,
-					Note: "Published major or stability history confirms this date; channel identity comes from the keyed Ship-It record.",
-				})
-			}
-		}
-		for _, platform := range []http.Platform{
-			http.PlatformWindows,
-			http.PlatformMac,
-			http.PlatformLinux,
-		} {
-			entry := inventoryEntry(http.BrowserFirefox, platform, version, version, channel, released, sources[0])
-			entry.Sources = append(entry.Sources, sources[1:]...)
-			entries = append(entries, entry)
-		}
-	}
 
-	mobile, err := i.firefoxAndroid(ctx)
-	if err != nil {
-		return nil, err
-	}
-	entries = append(entries, mobile...)
-
-	return entries, nil
-}
-
-type mozillaReleaseHistory struct {
-	Releases map[string]struct {
-		Version  string `json:"version"`
-		Product  string `json:"product"`
-		Category string `json:"category"`
-		Date     string `json:"date"`
-	} `json:"releases"`
-}
-
-func (i *importer) firefoxAndroid(ctx context.Context) ([]browser.Descriptor, error) {
-	url := "https://product-details.mozilla.org/1.0/mobile_android.json"
-	history, err := fetchJSON[mozillaReleaseHistory](ctx, i, url)
-	if err != nil {
-		return nil, err
-	}
-	var entries []browser.Descriptor
-	for _, release := range history.Releases {
-		released, err := time.Parse(time.DateOnly, release.Date)
-		if err != nil || !i.includes(released) || !numericVersion(release.Version) || release.Category == "dev" {
+		version := strings.TrimSuffix(entry.Version, "esr")
+		if !numericVersion(version) {
 			continue
 		}
-		engine := ""
-		if release.Product == "firefox-android" {
-			engine = release.Version
+
+		product := browserFirefox
+		if strings.HasSuffix(id, "esr") {
+			product = browserFirefoxESR
 		}
-		entry := inventoryEntry(http.BrowserFirefox, http.PlatformAndroid, release.Version, engine, "stable", released, browser.Source{
-			URL:  url,
-			Note: "Mozilla Ship-It published Android release history, including the successor firefox-android product; historical Fenix and Gecko builds use different identifiers.",
-		})
-		entry.Sources = append(entry.Sources, browser.Source{
-			URL:  "https://firefox-source-docs.mozilla.org/mobile/android/shared/versioning.html",
-			Note: "The unified Android product uses the shared version file; Android-only patch releases still require their actual source tag.",
-		})
-		entries = append(entries, entry)
+
+		for _, target := range desktopPlatforms {
+			releases = append(releases, release{
+				browser:  product,
+				platform: target,
+				version:  version,
+				engine:   version,
+				released: released,
+			})
+		}
 	}
 
-	return entries, nil
+	return releases, nil
 }
 
-func (i *importer) firefoxIOS(ctx context.Context) ([]browser.Descriptor, error) {
-	return i.githubInventory(ctx, "mozilla-mobile/firefox-ios", http.BrowserFirefox, []http.Platform{
-		http.PlatformIOS,
-		http.PlatformIPadOS,
-	})
+// firefoxAndroid collects Firefox for Android builds. Only the
+// firefox-android product shares its version with Gecko; the earlier Fenix
+// and Fennec products have no published engine build and are skipped.
+func (c *collector) firefoxAndroid(ctx context.Context) ([]release, error) {
+	history, err := c.fetcher.fetchJSON[mozillaProductDetails](ctx, firefoxAndroidURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(history.Releases) == 0 {
+		return nil, errors.New("no releases in the Firefox Android product details; the format may have changed")
+	}
+
+	var releases []release
+	for _, entry := range history.Releases {
+		released, included := c.includedMozillaRelease(entry, "firefox-android")
+		if !included || !numericVersion(entry.Version) {
+			continue
+		}
+
+		releases = append(releases, release{
+			browser:  browserFirefox,
+			platform: platformAndroid,
+			version:  entry.Version,
+			engine:   entry.Version,
+			released: released,
+		})
+	}
+
+	return releases, nil
+}
+
+// includedMozillaRelease returns the release date of entry and whether it is
+// a published build of product inside the window.
+func (c *collector) includedMozillaRelease(entry mozillaRelease, product string) (time.Time, bool) {
+	if entry.Product != product || entry.Category == "dev" {
+		return time.Time{}, false
+	}
+
+	released, err := time.Parse(time.DateOnly, entry.Date)
+	if err != nil || !c.window.includes(released) {
+		return time.Time{}, false
+	}
+
+	return released, true
 }
