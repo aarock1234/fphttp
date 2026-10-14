@@ -313,15 +313,18 @@ func (t transportConfig) HTTP2Config() http2.Config {
 	return mergeHTTP2Config(t.t.HTTP2, t.t.h2Config)
 }
 
+// Fingerprint returns the HTTP/2 view of the Transport's profile snapshot,
+// or nil without a profile. The snapshot never changes after first use, so
+// the HTTP/2 transport shares its slices without copying them.
 func (t transportConfig) Fingerprint() *fingerprint.Config {
-	fp := t.t.Fingerprint.Clone()
-	if fp == nil {
+	snapshot := t.t.profileState.snapshot
+	if snapshot == nil {
 		return nil
 	}
 
 	return &fingerprint.Config{
-		HeaderOrder:       fp.HeaderOrder,
-		PseudoHeaderOrder: fp.PseudoHeaderOrder,
-		H2:                fp.H2,
+		HeaderOrder:       snapshot.HeaderOrder,
+		PseudoHeaderOrder: snapshot.PseudoHeaderOrder,
+		H2:                snapshot.HTTP2,
 	}
 }

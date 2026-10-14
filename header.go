@@ -189,9 +189,11 @@ func (h Header) WriteSubset(w io.Writer, exclude map[string]bool) error {
 }
 
 func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptrace.ClientTrace) error {
-	return h.writeSubsetCase(w, exclude, trace, nil)
+	return h.writeSubsetCase(w, exclude, trace, nil) // fphttp: writeSubset with HTTP/1.1 spellings
 }
 
+// writeSubsetCase is writeSubset with field names spelled by names
+// (fphttp hook; see header_order.go for the ordered variant).
 func (h Header) writeSubsetCase(w io.Writer, exclude map[string]bool, trace *httptrace.ClientTrace, names map[string]string) error {
 	kvs, sorter := h.sortedKeyValues(exclude)
 	defer headerSorterPool.Put(sorter)
@@ -199,10 +201,8 @@ func (h Header) writeSubsetCase(w io.Writer, exclude map[string]bool, trace *htt
 	return writeHeaderKeyValuesCase(w, kvs, trace, names)
 }
 
-func writeHeaderKeyValues(w io.Writer, kvs []keyValues, trace *httptrace.ClientTrace) error {
-	return writeHeaderKeyValuesCase(w, kvs, trace, nil)
-}
-
+// writeHeaderKeyValuesCase writes kvs in order, spelling each name with
+// wireHeaderName (fphttp hook; the loop is upstream's writeSubset body).
 func writeHeaderKeyValuesCase(w io.Writer, kvs []keyValues, trace *httptrace.ClientTrace, names map[string]string) error {
 	ws, ok := w.(io.StringWriter)
 	if !ok {
@@ -237,45 +237,6 @@ func writeHeaderKeyValuesCase(w io.Writer, kvs []keyValues, trace *httptrace.Cli
 	}
 
 	return nil
-}
-
-// writeSubsetOrdered writes configured fields first, followed by remaining
-// fields in lexical order. Values retain their order within each field.
-func (h Header) writeSubsetOrdered(w io.Writer, exclude map[string]bool, order []string, trace *httptrace.ClientTrace) error {
-	return h.writeSubsetOrderedCase(w, exclude, order, trace, nil)
-}
-
-func (h Header) writeSubsetOrderedCase(w io.Writer, exclude map[string]bool, order []string, trace *httptrace.ClientTrace, names map[string]string) error {
-	kvs, sorter := h.sortedKeyValues(exclude)
-	defer headerSorterPool.Put(sorter)
-
-	ranks := make(map[string]int, len(order))
-	for index, name := range order {
-		ranks[name] = index + 1
-	}
-
-	slices.SortStableFunc(kvs, func(a, b keyValues) int {
-		aRank := ranks[a.key]
-		bRank := ranks[b.key]
-		if aRank == 0 {
-			aRank = len(order) + 1
-		}
-		if bRank == 0 {
-			bRank = len(order) + 1
-		}
-
-		return aRank - bRank
-	})
-
-	return writeHeaderKeyValuesCase(w, kvs, trace, names)
-}
-
-func wireHeaderName(name string, names map[string]string) string {
-	if spelling := names[CanonicalHeaderKey(name)]; spelling != "" {
-		return spelling
-	}
-
-	return name
 }
 
 // CanonicalHeaderKey returns the canonical format of the

@@ -129,7 +129,8 @@ func (t *unencryptedTransport) RoundTrip(req *ClientRequest) (*ClientResponse, e
 // ClientConn is the state of a single HTTP/2 client connection to an
 // HTTP/2 server.
 type ClientConn struct {
-	// fingerprint is resolved once for this connection, including SETTINGS GREASE.
+	// fingerprint is the transport's immutable profile configuration, shared
+	// by every connection, or nil for Go's behavior.
 	fingerprint   *fingerprint.Config
 	t             *Transport
 	tconn         net.Conn             // usually *tls.Conn, except specialized impls
@@ -573,15 +574,9 @@ func (t *Transport) NewClientConn(c net.Conn, internalStateHook func()) (NetHTTP
 }
 
 func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook func()) (*ClientConn, error) {
-	connectionFingerprint, err := t.fingerprint.ForConnection()
-	if err != nil {
-		_ = c.Close()
-
-		return nil, err
-	}
 	conf := configFromTransport(t)
 	cc := &ClientConn{
-		fingerprint:                 connectionFingerprint,
+		fingerprint:                 t.fingerprint,
 		t:                           t,
 		tconn:                       c,
 		readerDone:                  make(chan struct{}),
@@ -1532,13 +1527,10 @@ func (cs *clientStream) encodeAndWriteHeaders(req *ClientRequest) error {
 		priority = &cc.fingerprint.H2.HeaderPriority
 	}
 	if priority != nil {
+		// An enabled priority is allowed with NO_RFC7540_PRIORITIES = 1:
+		// Firefox 132 and later send both.
 		if err := priority.Validate(cs.ID); err != nil {
 			return err
-		}
-		if fp := cc.fingerprint; fp != nil && priority.Enabled {
-			if value, _ := fp.H2.SettingValue(fingerprint.SettingNoRFC7540Priorities); value == 1 {
-				return errors.New("fphttp: HEADERS priority conflicts with NO_RFC7540_PRIORITIES = 1")
-			}
 		}
 	}
 

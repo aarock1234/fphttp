@@ -72,8 +72,8 @@ type EncodeHeadersResult struct {
 func EncodeHeaders(ctx context.Context, param EncodeHeadersParam, headerf func(name, value string)) (res EncodeHeadersResult, _ error) {
 	req := param.Request
 	if err := errors.Join(
-		fingerprint.ValidateHeaderOrder(param.HeaderOrder),
-		fingerprint.ValidatePseudoHeaderOrder(param.PseudoHeaderOrder),
+		fingerprint.ValidateHeaderOrder("HeaderOrder", param.HeaderOrder),
+		fingerprint.ValidatePseudoHeaderOrder("PseudoHeaderOrder", param.PseudoHeaderOrder),
 	); err != nil {
 		return res, err
 	}
@@ -238,7 +238,7 @@ func EncodeHeaders(ctx context.Context, param EncodeHeadersParam, headerf func(n
 		}
 	}
 
-	if param.HeaderOrder != nil || len(param.PseudoHeaderOrder) > 0 {
+	if len(param.HeaderOrder) > 0 || len(param.PseudoHeaderOrder) > 0 {
 		enumerateHeaders = orderRequestHeaders(enumerateHeaders, param)
 	}
 

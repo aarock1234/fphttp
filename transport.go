@@ -44,17 +44,23 @@ import (
 // as directed by the environment variables HTTP_PROXY, HTTPS_PROXY
 // and NO_PROXY (or the lowercase versions thereof, which take
 // precedence over the uppercase versions).
-var DefaultTransport RoundTripper = &Transport{
-	Proxy: ProxyFromEnvironment,
-	DialContext: defaultTransportDialContext(&net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}),
-	ForceAttemptHTTP2:     true,
-	MaxIdleConns:          100,
-	IdleConnTimeout:       90 * time.Second,
-	TLSHandshakeTimeout:   10 * time.Second,
-	ExpectContinueTimeout: 1 * time.Second,
+var DefaultTransport RoundTripper = newDefaultTransport()
+
+// newDefaultTransport returns a new Transport with the settings of
+// DefaultTransport. fphttp: NewClient builds its transports with it too.
+func newDefaultTransport() *Transport {
+	return &Transport{
+		Proxy: ProxyFromEnvironment,
+		DialContext: defaultTransportDialContext(&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}),
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 }
 
 // DefaultMaxIdleConnsPerHost is the default value of [Transport]'s
@@ -294,7 +300,7 @@ type Transport struct {
 	h2Config           http2ExternalTransportConfig
 	h3Transport        dialClientConner // non-nil if http3 wired up
 	tlsNextProtoWasNil bool             // whether TLSNextProto was nil when the Once fired
-	fingerprintErr     error            // guarded by nextProtoOnce
+	profileState       transportProfile // fphttp: Profile snapshot; guarded by nextProtoOnce
 
 	// ForceAttemptHTTP2 controls whether HTTP/2 is enabled when a non-zero
 	// Dial, DialTLS, or DialContext func or TLSClientConfig is provided.
@@ -316,10 +322,12 @@ type Transport struct {
 	// the default is HTTP/1 and HTTP/2.
 	Protocols *Protocols
 
-	// Fingerprint configures TLS and HTTP/2 connection fingerprinting and
-	// default header order. It must not be modified after the first request.
-	// A nil value uses Go's TLS and HTTP defaults.
-	Fingerprint *Fingerprint
+	// Profile makes connections and requests look like a browser. A nil Profile
+	// uses Go's TLS and HTTP behavior. The Transport deep-copies Profile on first
+	// use; later changes to the Profile are ignored. See [TLSProfile] for how
+	// Profile shares TLS settings with TLSClientConfig, DialTLSContext, and
+	// HTTPS proxies. A Profile cannot be combined with HTTP/3.
+	Profile *Profile
 }
 
 func (t *Transport) writeBufferSize() int {
@@ -368,7 +376,7 @@ func (t *Transport) Clone() *Transport {
 		ForceAttemptHTTP2:      t.ForceAttemptHTTP2,
 		WriteBufferSize:        t.WriteBufferSize,
 		ReadBufferSize:         t.ReadBufferSize,
-		Fingerprint:            t.Fingerprint.Clone(),
+		Profile:                t.Profile.Clone(), // fphttp: t2 takes its own snapshot
 	}
 	if t.TLSClientConfig != nil {
 		t2.TLSClientConfig = t.TLSClientConfig.Clone()
@@ -443,14 +451,8 @@ var http2client = godebug.New("http2client")
 // It must be called via t.nextProtoOnce.Do.
 func (t *Transport) onceSetNextProtoDefaults() {
 	t.tlsNextProtoWasNil = (t.TLSNextProto == nil)
-	t.fingerprintErr = t.Fingerprint.Validate()
-	if !t.hasCustomTLSDialer() {
-		t.fingerprintErr = errors.Join(t.fingerprintErr, t.Fingerprint.validateTLSConfig(t.TLSClientConfig))
-	}
-	if t.Fingerprint != nil && t.TLSNextProto["h2"] != nil {
-		t.fingerprintErr = errors.Join(t.fingerprintErr, errors.New("fphttp: fingerprinting requires the built-in HTTP/2 implementation"))
-	}
-	if t.fingerprintErr != nil {
+	t.snapshotProfile() // fphttp: copy and validate Profile before anything below reads it
+	if t.profileState.err != nil {
 		return
 	}
 
@@ -468,8 +470,8 @@ func (t *Transport) onceSetNextProtoDefaults() {
 	if rv := reflect.ValueOf(altProto["https"]); rv.IsValid() && rv.Type().Kind() == reflect.Struct && rv.Type().NumField() == 1 {
 		if v := rv.Field(0); v.CanInterface() {
 			if h2i, ok := v.Interface().(closeIdleConnectionser); ok {
-				if t.Fingerprint != nil {
-					t.fingerprintErr = errors.New("fphttp: fingerprinting cannot be combined with an external HTTP/2 transport")
+				if t.profileState.snapshot != nil { // fphttp: x/net/http2 cannot send a profile's HTTP/2 settings
+					t.profileState.err = errProfileExternalHTTP2
 					return
 				}
 				t.closeIdleFunc = h2i
@@ -506,7 +508,7 @@ func (t *Transport) protocols() Protocols {
 		if t.TLSNextProto["h2"] != nil {
 			p.SetHTTP2(true)
 		}
-	case !t.ForceAttemptHTTP2 && t.Fingerprint == nil && (t.TLSClientConfig != nil || t.Dial != nil || t.DialContext != nil || t.hasCustomTLSDialer()):
+	case !t.ForceAttemptHTTP2 && t.profileState.snapshot == nil && (t.TLSClientConfig != nil || t.Dial != nil || t.DialContext != nil || t.hasCustomTLSDialer()):
 		// Be conservative and don't automatically enable
 		// http2 if they've specified a custom TLS config or
 		// custom dialers. Let them opt-in themselves via
@@ -631,9 +633,9 @@ func validateHeaders(hdrs Header) string {
 // roundTrip implements a RoundTripper over HTTP.
 func (t *Transport) roundTrip(req *Request) (_ *Response, err error) {
 	t.nextProtoOnce.Do(t.onceSetNextProtoDefaults)
-	if t.fingerprintErr != nil {
+	if err := t.profileState.err; err != nil {
 		req.closeBody()
-		return nil, t.fingerprintErr
+		return nil, err
 	}
 	if err := validateRequestOrder(req); err != nil {
 		req.closeBody()
@@ -1810,8 +1812,8 @@ func (pconn *persistConn) addTLS(ctx context.Context, addr string, trace *httptr
 		pconn.conn.Close()
 		return err
 	}
-	if fp := pconn.t.Fingerprint; fp.hasTLSFingerprint() {
-		return pconn.addTLSFingerprint(ctx, cfg, trace, fp)
+	if pconn.t.usesProfileTLS() {
+		return pconn.addProfileTLS(ctx, cfg, trace) // fphttp: the profile owns the ClientHello
 	}
 
 	if pconn.cacheKey.onlyH1 {
@@ -1821,7 +1823,8 @@ func (pconn *persistConn) addTLS(ctx context.Context, addr string, trace *httptr
 }
 
 // HTTPS proxies carry HTTP/1.1 requests or CONNECT tunnels. Their outer TLS
-// connection must not negotiate the origin's HTTP/2 fingerprint.
+// connection uses crypto/tls, never the profile's ClientHello, and must not
+// negotiate HTTP/2.
 func (pconn *persistConn) addProxyTLS(ctx context.Context, addr string, trace *httptrace.ClientTrace) error {
 	cfg, err := pconn.t.tlsConfigForDial(addr)
 	if err != nil {
@@ -2041,6 +2044,7 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod, isClientConn
 			Host:   cm.targetAddr,
 			Header: hdr,
 		}
+		t.applyProfileToConnect(connectReq) // fphttp: open the tunnel as the profile's browser
 
 		// Set a (long) timeout here to make sure we don't block forever
 		// and leak a goroutine if the connection stops replying after
@@ -2885,17 +2889,7 @@ func (pc *persistConn) writeLoop() {
 		select {
 		case wr := <-pc.writech:
 			startBytesWritten := pc.nwrite
-			var headerOrder []string
-			if fp := pc.t.Fingerprint; fp != nil {
-				headerOrder = fp.HeaderOrder
-			}
-
-			request := wr.req.Request
-			if fp := pc.t.Fingerprint; fp != nil && request.H1HeaderCase == nil && fp.H1HeaderCase != nil {
-				request = new(*request)
-				request.H1HeaderCase = fp.H1HeaderCase
-			}
-
+			request, headerOrder := pc.t.http1Layout(wr.req.Request) // fphttp: profile order and casing
 			err := request.write(pc.bw, pc.isProxy, wr.req.extra, pc.waitForContinue(wr.continueCh), headerOrder)
 			if bre, ok := err.(requestBodyReadError); ok {
 				err = bre.error

@@ -1,14 +1,12 @@
-// Package fingerprint defines the wire configuration shared by the HTTP stack.
+// Package fingerprint defines the wire configuration that the root package,
+// the HTTP/2 transport, and the browser catalog share: the HTTP/2
+// connection preface and request priority, and the validation rules for
+// header order and HTTP/1.1 field casing.
 package fingerprint
 
 import (
-	"errors"
 	"fmt"
-	"math"
-	"net/textproto"
 	"slices"
-
-	"golang.org/x/net/http/httpguts"
 )
 
 // SettingID identifies an HTTP/2 SETTINGS parameter.
@@ -75,21 +73,6 @@ type Priority struct {
 	Weight uint8
 }
 
-// Validate checks the dependency's range and, when known, the stream ID.
-func (p Priority) Validate(streamID uint32) error {
-	if !p.Enabled {
-		return nil
-	}
-	if p.StreamDep > math.MaxInt32 {
-		return errors.New("fphttp: HEADERS priority dependency exceeds 2147483647")
-	}
-	if streamID != 0 && p.StreamDep == streamID {
-		return errors.New("fphttp: a HEADERS frame cannot depend on its own stream")
-	}
-
-	return nil
-}
-
 // PriorityFrame is a standalone PRIORITY frame.
 type PriorityFrame struct {
 	// StreamID is the non-zero 31-bit stream ID being prioritized.
@@ -105,16 +88,13 @@ type PriorityFrame struct {
 	Weight uint8
 }
 
-// HTTP2 configures the initial HTTP/2 connection frames.
+// HTTP2 configures the initial HTTP/2 connection frames and the default
+// priority of request HEADERS frames.
 type HTTP2 struct {
-	// Settings replaces the initial SETTINGS frame when non-nil.
-	// It must explicitly disable server push, which this client does not support.
+	// Settings replaces the initial SETTINGS frame when non-nil, in wire
+	// order. It must explicitly disable server push, which this client does
+	// not support. A nil Settings sends Go's SETTINGS.
 	Settings []Setting
-
-	// SettingsFactory creates fresh ordered settings once per connection.
-	// It must be concurrency-safe, return owned data, and cannot accompany
-	// Settings. Each result is validated before the client preface is sent.
-	SettingsFactory func() ([]Setting, error)
 
 	// ConnectionFlow overrides the initial WINDOW_UPDATE increment.
 	// Zero uses the standard Go increment.
@@ -130,9 +110,12 @@ type HTTP2 struct {
 	HeaderPriority Priority
 }
 
-// Config is the fingerprint configuration consumed by the HTTP/2 transport.
+// Config is the profile configuration the HTTP/2 transport reads. The
+// transport shares one Config between all of its connections, so a Config
+// must not be modified once a transport uses it.
 type Config struct {
-	// HeaderOrder lists canonical regular header names in wire order.
+	// HeaderOrder lists regular header names in wire order. Names match
+	// fields ignoring case.
 	HeaderOrder []string
 
 	// PseudoHeaderOrder lists all four request pseudo-headers in wire order.
@@ -153,177 +136,12 @@ func (h HTTP2) SettingValue(id SettingID) (uint32, bool) {
 	return 0, false
 }
 
-// Validate rejects configurations that cannot be sent or honored safely.
-func (h HTTP2) Validate() error {
-	var problems []error
-	if h.SettingsFactory != nil && h.Settings != nil {
-		problems = append(problems, errors.New("fphttp: use either H2 Settings or SettingsFactory"))
-	}
-	seen := make(map[SettingID]bool, len(h.Settings))
-
-	for _, setting := range h.Settings {
-		if seen[setting.ID] {
-			problems = append(problems, fmt.Errorf("fphttp: duplicate H2 setting ID %v", setting.ID))
-		}
-		seen[setting.ID] = true
-
-		switch setting.ID {
-		case SettingEnablePush:
-			if setting.Val != 0 {
-				problems = append(problems, errors.New("fphttp: ENABLE_PUSH must be 0; server push is unsupported"))
-			}
-		case SettingInitialWindowSize:
-			if setting.Val == 0 || setting.Val > math.MaxInt32 {
-				problems = append(problems, errors.New("fphttp: INITIAL_WINDOW_SIZE must be between 1 and 2147483647"))
-			}
-		case SettingMaxFrameSize:
-			if setting.Val < 16384 || setting.Val > 16777215 {
-				problems = append(problems, errors.New("fphttp: MAX_FRAME_SIZE must be between 16384 and 16777215"))
-			}
-		case SettingMaxHeaderListSize:
-			if setting.Val == 0 {
-				problems = append(problems, errors.New("fphttp: MAX_HEADER_LIST_SIZE must allow response headers"))
-			}
-		case SettingEnableConnectProtocol, SettingNoRFC7540Priorities:
-			if setting.Val > 1 {
-				problems = append(problems, fmt.Errorf("fphttp: %v must be 0 or 1", setting.ID))
-			}
-		}
-	}
-
-	if h.Settings != nil && !seen[SettingEnablePush] {
-		problems = append(problems, errors.New("fphttp: custom H2 settings must include ENABLE_PUSH = 0"))
-	}
-	if h.ConnectionFlow > math.MaxInt32-65535 {
-		problems = append(problems, errors.New("fphttp: ConnectionFlow plus the initial window exceeds 2147483647"))
-	}
-	if h.InitialStreamID != 0 && (h.InitialStreamID%2 == 0 || h.InitialStreamID > math.MaxInt32) {
-		problems = append(problems, errors.New("fphttp: InitialStreamID must be an odd 31-bit stream ID"))
-	}
-	firstStreamID := h.InitialStreamID
-	if firstStreamID == 0 {
-		firstStreamID = 1
-	}
-	if err := h.HeaderPriority.Validate(firstStreamID); err != nil {
-		problems = append(problems, err)
-	}
-
-	for i, priority := range h.InitPriorityFrames {
-		if priority.StreamID == 0 || priority.StreamID > math.MaxInt32 {
-			problems = append(problems, fmt.Errorf("fphttp: InitPriorityFrames[%d] requires a non-zero 31-bit StreamID", i))
-		}
-		if priority.StreamDep > math.MaxInt32 || priority.StreamDep == priority.StreamID {
-			problems = append(problems, fmt.Errorf("fphttp: InitPriorityFrames[%d] has an invalid StreamDep", i))
-		}
-	}
-
-	if value, _ := h.SettingValue(SettingNoRFC7540Priorities); value == 1 {
-		if h.HeaderPriority.Enabled || len(h.InitPriorityFrames) > 0 {
-			problems = append(problems, errors.New("fphttp: NO_RFC7540_PRIORITIES = 1 conflicts with legacy priority frames"))
-		}
-	}
-
-	return errors.Join(problems...)
-}
-
-// ForConnection resolves and validates connection-specific settings. Factories
-// are removed from the result, and all mutable slices are independently owned.
-func (h HTTP2) ForConnection() (HTTP2, error) {
-	if err := h.Validate(); err != nil {
-		return HTTP2{}, err
-	}
-	if h.SettingsFactory != nil {
-		settings, err := h.SettingsFactory()
-		if err != nil {
-			return HTTP2{}, fmt.Errorf("fphttp: build H2 settings: %w", err)
-		}
-		if settings == nil {
-			return HTTP2{}, errors.New("fphttp: H2 SettingsFactory returned nil settings")
-		}
-		h.Settings = settings
-		h.SettingsFactory = nil
-	}
+// Clone returns a deep copy of h. The Settings and InitPriorityFrames slices
+// are copied and keep their nilness, so a nil Settings still sends Go's
+// SETTINGS.
+func (h HTTP2) Clone() HTTP2 {
 	h.Settings = slices.Clone(h.Settings)
 	h.InitPriorityFrames = slices.Clone(h.InitPriorityFrames)
-	if err := h.Validate(); err != nil {
-		return HTTP2{}, err
-	}
 
-	return h, nil
-}
-
-// ForConnection copies a transport configuration and resolves fresh settings.
-// A nil configuration retains the ordinary Go connection behavior.
-func (c *Config) ForConnection() (*Config, error) {
-	if c == nil {
-		return nil, nil
-	}
-	h2, err := c.H2.ForConnection()
-	if err != nil {
-		return nil, err
-	}
-	clone := *c
-	clone.H2 = h2
-	clone.HeaderOrder = slices.Clone(c.HeaderOrder)
-	clone.PseudoHeaderOrder = slices.Clone(c.PseudoHeaderOrder)
-
-	return &clone, nil
-}
-
-// ValidateHeaderOrder checks canonical field names and duplicates.
-func ValidateHeaderOrder(order []string) error {
-	var problems []error
-	seen := make(map[string]bool, len(order))
-
-	for _, name := range order {
-		switch {
-		case !httpguts.ValidHeaderFieldName(name):
-			problems = append(problems, fmt.Errorf("fphttp: HeaderOrder contains invalid field name %q", name))
-		case textproto.CanonicalMIMEHeaderKey(name) != name:
-			problems = append(problems, fmt.Errorf("fphttp: HeaderOrder key %q is not canonical, use %q", name, textproto.CanonicalMIMEHeaderKey(name)))
-		case seen[name]:
-			problems = append(problems, fmt.Errorf("fphttp: HeaderOrder contains duplicate %q", name))
-		}
-		seen[name] = true
-	}
-
-	return errors.Join(problems...)
-}
-
-// ValidatePseudoHeaderOrder checks all four request pseudo-headers.
-// An empty order selects the standard Go order.
-func ValidatePseudoHeaderOrder(order []string) error {
-	if len(order) == 0 {
-		return nil
-	}
-
-	required := []string{":method", ":authority", ":scheme", ":path"}
-	var problems []error
-	seen := make(map[string]bool, len(required))
-
-	for _, name := range order {
-		switch {
-		case !slices.Contains(required, name):
-			problems = append(problems, fmt.Errorf("fphttp: PseudoHeaderOrder contains invalid pseudo-header %q", name))
-		case seen[name]:
-			problems = append(problems, fmt.Errorf("fphttp: PseudoHeaderOrder contains duplicate %q", name))
-		}
-		seen[name] = true
-	}
-	for _, name := range required {
-		if !seen[name] {
-			problems = append(problems, fmt.Errorf("fphttp: PseudoHeaderOrder missing required pseudo-header %q", name))
-		}
-	}
-
-	return errors.Join(problems...)
-}
-
-// ResolveOrder prefers an explicitly supplied request order.
-func ResolveOrder(request, fallback []string) []string {
-	if request != nil {
-		return request
-	}
-
-	return fallback
+	return h
 }

@@ -30,27 +30,27 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Fingerprint = http.Chrome148Fetch()
-	defer transport.CloseIdleConnections()
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   15 * time.Second,
+	profile, err := http.NewProfile(http.BrowserChrome, http.PlatformWindows, http.Latest)
+	if err != nil {
+		return fmt.Errorf("create profile: %w", err)
 	}
+
+	client := http.NewClient(profile)
+	client.Timeout = 15 * time.Second
+	defer client.CloseIdleConnections()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://tls.peet.ws/api/clean", nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "fphttp-example/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("unexpected response status: %s", resp.Status)
 	}

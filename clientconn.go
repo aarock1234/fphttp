@@ -113,6 +113,9 @@ type genericClientConn interface {
 // The caller is responsible for closing the new connection.
 func (t *Transport) NewClientConn(ctx context.Context, scheme, address string) (*ClientConn, error) {
 	t.nextProtoOnce.Do(t.onceSetNextProtoDefaults)
+	if err := t.profileState.err; err != nil {
+		return nil, err // fphttp: an invalid Profile fails every connection
+	}
 
 	if t.h2Config != nil {
 		// Handle x/net/http2.Transport.NewClientConn passing us a net.Conn

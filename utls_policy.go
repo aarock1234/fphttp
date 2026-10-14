@@ -8,96 +8,70 @@ import (
 	utls "github.com/refraction-networking/utls"
 )
 
-// Browser presets overwrite parts of uTLS's config during initialization.
-// Apply the caller's security policy after that step, before marshaling again.
-// Restrictions keep the preset's relative order but can change its fingerprint.
+// configureUTLSPolicy applies the TLSClientConfig settings that interact
+// with a profile ClientHello after uTLS has built its handshake state and
+// before the ClientHello is marshaled again. The ClientHello's versions,
+// cipher suites, and groups are the profile's; only Encrypted Client Hello
+// narrows them, because it requires TLS 1.3.
 func configureUTLSPolicy(conn *utls.UConn, config *utls.Config, original *tls.Config) error {
-	minVersion := max(config.MinVersion, tls.VersionTLS12)
-	if original.MinVersion != 0 {
-		minVersion = max(config.MinVersion, original.MinVersion)
-	}
-	maxVersion := config.MaxVersion
-	if original.MaxVersion != 0 {
-		maxVersion = min(maxVersion, original.MaxVersion)
-	}
 	if len(original.EncryptedClientHelloConfigList) > 0 {
-		minVersion = max(minVersion, tls.VersionTLS13)
-	}
-	if minVersion > maxVersion {
-		return errors.New("TLS version policy has no version in common with the ClientHello")
-	}
-	if err := conn.SetTLSVers(minVersion, maxVersion, conn.Extensions); err != nil {
-		return err
-	}
-	config.MinVersion = minVersion
-	config.MaxVersion = maxVersion
-	conn.HandshakeState.Hello.Vers = min(maxVersion, tls.VersionTLS12)
-
-	for _, extension := range conn.Extensions {
-		switch extension := extension.(type) {
-		case *utls.SupportedVersionsExtension:
-			extension.Versions = slices.DeleteFunc(extension.Versions, func(version uint16) bool {
-				return !isGREASEValue(version) && (version < minVersion || version > maxVersion)
-			})
-		case *utls.RenegotiationInfoExtension:
-			extension.Renegotiation = utls.RenegotiationSupport(original.Renegotiation)
+		if err := requireTLS13(conn, config); err != nil {
+			return err
 		}
 	}
 
-	if err := restrictUTLSCipherSuites(conn, original.CipherSuites, maxVersion); err != nil {
-		return err
-	}
-	if len(original.CurvePreferences) > 0 {
-		return restrictUTLSCurves(conn, original.CurvePreferences)
-	}
+	setRenegotiation(conn, utls.RenegotiationSupport(original.Renegotiation))
 
 	return nil
 }
 
-func restrictUTLSCipherSuites(conn *utls.UConn, allowed []uint16, maxVersion uint16) error {
-	hello := conn.HandshakeState.Hello
-	hello.CipherSuites = slices.DeleteFunc(hello.CipherSuites, func(suite uint16) bool {
-		if isGREASEValue(suite) {
-			return false
-		}
-		if suite >= utls.TLS_AES_128_GCM_SHA256 && suite <= utls.TLS_CHACHA20_POLY1305_SHA256 {
-			return maxVersion < tls.VersionTLS13
-		}
+// requireTLS13 limits a ClientHello to TLS 1.3, the only version that can
+// carry Encrypted Client Hello. supported_versions keeps its GREASE value
+// and loses every version below TLS 1.3. A ClientHello that does not offer
+// TLS 1.3 is an error.
+func requireTLS13(conn *utls.UConn, config *utls.Config) error {
+	offered := false
 
-		return allowed != nil && !slices.Contains(allowed, suite)
-	})
-	for _, suite := range hello.CipherSuites {
-		if !isGREASEValue(suite) {
-			return nil
-		}
-	}
-
-	return errors.New("TLS cipher suite policy has no suite in common with the ClientHello")
-}
-
-func restrictUTLSCurves(conn *utls.UConn, allowed []tls.CurveID) error {
-	curves := convertCurveIDs(allowed)
 	for _, extension := range conn.Extensions {
-		switch extension := extension.(type) {
-		case *utls.SupportedCurvesExtension:
-			extension.Curves = slices.DeleteFunc(extension.Curves, func(curve utls.CurveID) bool {
-				return !isGREASEValue(uint16(curve)) && !slices.Contains(curves, curve)
-			})
-			if !slices.ContainsFunc(extension.Curves, func(curve utls.CurveID) bool {
-				return !isGREASEValue(uint16(curve))
-			}) {
-				return errors.New("TLS curve policy has no group in common with the ClientHello")
-			}
-		case *utls.KeyShareExtension:
-			extension.KeyShares = slices.DeleteFunc(extension.KeyShares, func(share utls.KeyShare) bool {
-				return !isGREASEValue(uint16(share.Group)) && !slices.Contains(curves, share.Group)
-			})
+		versions, ok := extension.(*utls.SupportedVersionsExtension)
+		if !ok {
+			continue
 		}
+
+		versions.Versions = slices.DeleteFunc(versions.Versions, func(version uint16) bool {
+			return !isGREASEValue(version) && version != tls.VersionTLS13
+		})
+		offered = slices.Contains(versions.Versions, tls.VersionTLS13)
 	}
+
+	if !offered {
+		return errors.New("ECH requires TLS 1.3, but the ClientHello does not offer it")
+	}
+
+	if err := conn.SetTLSVers(tls.VersionTLS13, tls.VersionTLS13, conn.Extensions); err != nil {
+		return err
+	}
+
+	config.MinVersion = tls.VersionTLS13
+	config.MaxVersion = tls.VersionTLS13
+	conn.HandshakeState.Hello.Vers = tls.VersionTLS12
 
 	return nil
 }
 
+// setRenegotiation applies the caller's renegotiation policy through the
+// renegotiation_info extension, which uTLS copies into its config when the
+// configuration is applied. The extension stays on the wire either way.
+func setRenegotiation(conn *utls.UConn, support utls.RenegotiationSupport) {
+	for _, extension := range conn.Extensions {
+		if renegotiation, ok := extension.(*utls.RenegotiationInfoExtension); ok {
+			renegotiation.Renegotiation = support
+		}
+	}
+}
+
+// isGREASEValue reports whether value is a GREASE code point (RFC 8701),
+// such as 0x0a0a or 0xfafa.
 func isGREASEValue(value uint16) bool {
 	return value&0x0f0f == 0x0a0a && byte(value) == byte(value>>8)
 }

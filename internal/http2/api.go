@@ -120,7 +120,10 @@ type TransportConfig interface {
 	IdleConnTimeout() time.Duration
 	HTTP2Config() Config
 
-	// Fingerprint returns immutable connection and default request parameters.
+	// Fingerprint returns the connection and default request parameters of
+	// the transport's profile, or nil for Go's behavior. The transport reads
+	// it once and shares it between connections without copying, so the
+	// result must never be modified.
 	Fingerprint() *fingerprint.Config
 }
 

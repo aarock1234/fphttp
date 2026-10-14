@@ -289,38 +289,39 @@ type Request struct {
 	Trailer Header
 
 	// HeaderOrder specifies the order in which HTTP/1.1 headers are
-	// written on the wire. Keys should be in canonical form (e.g.
-	// "Content-Type", not "content-type"). Headers present in the
-	// request but absent from this list are appended in sorted order.
+	// written on the wire. Names match fields ignoring case, so
+	// "content-type" orders the Content-Type field. Headers present in
+	// the request but absent from this list are appended in sorted order.
 	//
 	// For HTTP/2, this controls the iteration order of regular
 	// (non-pseudo) headers; names are lowercased automatically.
 	//
-	// If nil, the Transport's Fingerprint.HeaderOrder is used as a
-	// fallback. If both are nil, Go's default header writing is used.
-	// An explicitly empty slice disables the fingerprint's order.
+	// If nil, the Transport's Profile supplies the order. If both are
+	// nil, Go's default header writing is used. An explicitly empty
+	// slice selects Go's order without the Profile's.
 	//
 	// This field is ignored by the HTTP server.
 	HeaderOrder []string
 
 	// H1HeaderCase specifies HTTP/1.1 field spelling without changing order.
-	// Keys are canonical names and values must differ only in case. Nil uses
-	// the transport fingerprint; an empty map disables that inheritance.
-	// This field is ignored for HTTP/2 and by the HTTP server.
+	// Keys match fields ignoring case, and values must spell their key with
+	// different case only. The map is merged over the Transport Profile's
+	// H1HeaderCase, this map winning per field. This field is ignored for
+	// HTTP/2 and by the HTTP server.
 	H1HeaderCase map[string]string
 
 	// PseudoHeaderOrder specifies the order of HTTP/2 pseudo-headers
 	// (:method, :authority, :scheme, :path). A nonempty order must
 	// contain all four exactly once. If nil, the Transport's
-	// Fingerprint.PseudoHeaderOrder is used as a fallback. If both
+	// Profile.PseudoHeaderOrder is used as a fallback. If both
 	// are nil, the standard Go order is used. An explicitly empty
 	// slice selects the standard Go order without the fallback.
 	//
 	// This field is ignored for HTTP/1.1 requests and by the HTTP server.
 	PseudoHeaderOrder []string
 
-	// H2Priority overrides the fingerprint's HEADERS priority for this request.
-	// Nil uses the fingerprint; a non-nil value with Enabled false omits legacy
+	// H2Priority overrides the Profile's HEADERS priority for this request.
+	// Nil uses the Profile; a non-nil value with Enabled false omits legacy
 	// priority. This field is ignored for HTTP/1.1 and by the HTTP server.
 	H2Priority *H2Priority
 
@@ -669,6 +670,7 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 	if err := validateRequestOrder(r); err != nil {
 		return err
 	}
+	r = r.withCanonicalHeaderCase() // fphttp: H1HeaderCase keys may use any case
 
 	// Find the target host. Prefer the Host: header, but if that
 	// is not given, use the host from the request URL.

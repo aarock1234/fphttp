@@ -20,6 +20,9 @@ type utlsConn struct {
 	*utls.UConn
 }
 
+// wrapUTLSConn wraps a *utls.UConn returned by DialTLS or DialTLSContext so
+// that its ConnectionState converts to crypto/tls. Other connections are
+// returned unchanged, and a nil *utls.UConn becomes a nil net.Conn.
 func wrapUTLSConn(conn net.Conn) net.Conn {
 	if conn, ok := conn.(*utls.UConn); ok {
 		if conn == nil {
@@ -34,55 +37,31 @@ func wrapUTLSConn(conn net.Conn) net.Conn {
 
 // ConnectionState returns the current crypto/tls connection metadata.
 // This satisfies the http2connectionStater interface so that HTTP/2
-// connections created from fingerprinted TLS connections have their
-// TLS state available in Response.TLS.
+// connections created from profile TLS connections have their TLS state
+// available in Response.TLS.
 func (c *utlsConn) ConnectionState() tls.ConnectionState {
 	return convertUTLSConnectionState(c.UConn.ConnectionState())
 }
 
-// addTLSFingerprint performs a TLS handshake using uTLS to produce a
-// browser-like ClientHello fingerprint. It replaces the standard
-// addTLS path when Transport.Fingerprint is configured.
-func (pconn *persistConn) addTLSFingerprint(ctx context.Context, tlsConfig *tls.Config, trace *httptrace.ClientTrace, fp *Fingerprint) error {
+// addProfileTLS performs the TLS handshake with uTLS so that the
+// ClientHello is the one the Transport's profile snapshot describes. It
+// replaces the crypto/tls handshake in addTLS when the profile has a
+// NewHello. tlsConfig is the per-dial copy of TLSClientConfig with
+// ServerName set.
+func (pconn *persistConn) addProfileTLS(ctx context.Context, tlsConfig *tls.Config, trace *httptrace.ClientTrace) error {
 	plainConn := pconn.conn
-	cfg := utlsConfigFromTLS(tlsConfig, tlsConfig.ServerName)
-	cfg.ClientSessionCache = fp.ClientSessionCache
-	cfg.GetClientCertificate = fp.GetClientCertificate
-	cfg.PreferSkipResumptionOnNilExtension = true
-	cfg.OmitEmptyPsk = true
-	if get := cfg.GetClientCertificate; get != nil {
-		cfg.GetClientCertificate = func(info *utls.CertificateRequestInfo) (*utls.Certificate, error) {
-			certificate, err := get(info)
-			if err == nil && certificate == nil {
-				err = errors.New("fphttp: GetClientCertificate returned a nil certificate")
-			}
+	config := pconn.profileUTLSConfig(tlsConfig)
+	tlsConn := utls.UClient(plainConn, config, utls.HelloCustom)
 
-			return certificate, err
-		}
-	}
-	if pconn.cacheKey.onlyH1 {
-		cfg.NextProtos = []string{"http/1.1"}
-	}
-
-	helloID := fp.ClientHelloID
-	if fp.ClientHelloSpec != nil || fp.ClientHelloSpecFactory != nil {
-		helloID = utls.HelloCustom
-	}
-	tlsConn := utls.UClient(plainConn, cfg, helloID)
-
-	if helloID == utls.HelloCustom {
-		spec, err := fp.newClientHelloSpec()
-		if err == nil {
-			err = tlsConn.ApplyPreset(spec)
-		}
-		if err != nil {
-			_ = plainConn.Close()
-			return fmt.Errorf("fphttp: apply custom ClientHello: %w", err)
-		}
-	}
-
-	if err := pconn.configureUTLS(tlsConn, cfg, tlsConfig); err != nil {
+	if err := applyProfileHello(tlsConn, pconn.t.profileState.snapshot.TLS.NewHello); err != nil {
 		_ = plainConn.Close()
+
+		return fmt.Errorf("fphttp: apply profile ClientHello: %w", err)
+	}
+
+	if err := pconn.configureUTLS(tlsConn, config, tlsConfig); err != nil {
+		_ = plainConn.Close()
+
 		return fmt.Errorf("fphttp: configure ClientHello: %w", err)
 	}
 
@@ -95,17 +74,53 @@ func (pconn *persistConn) addTLSFingerprint(ctx context.Context, tlsConfig *tls.
 		return err
 	}
 
-	cs := convertUTLSConnectionState(tlsConn.ConnectionState())
+	state := convertUTLSConnectionState(tlsConn.ConnectionState())
 	if trace != nil && trace.TLSHandshakeDone != nil {
-		trace.TLSHandshakeDone(cs, nil)
+		trace.TLSHandshakeDone(state, nil)
 	}
 
-	pconn.tlsState = &cs
+	pconn.tlsState = &state
 	pconn.conn = &utlsConn{
 		UConn: tlsConn,
 	}
 
 	return nil
+}
+
+// profileUTLSConfig builds the uTLS configuration of one profile handshake
+// from tlsConfig and the Transport's session cache.
+//
+// Session resumption: the catalog's ClientHellos carry no pre_shared_key
+// extension, so TLS 1.3 sessions could never resume. AlwaysIncludePSK makes
+// uTLS append one, last, in ApplyPreset, and OmitEmptyPsk keeps it off the
+// wire until a cached session exists, as browsers do.
+//
+// Encrypted Client Hello: ApplyPreset appends pre_shared_key only when
+// Config.MaxVersion is TLS 1.3 or later at that moment, and SetTLSVers fills
+// MaxVersion from the spec only when no ECH config list is configured, so
+// with a list AlwaysIncludePSK adds nothing (TLSClientConfig cannot set
+// MaxVersion either). A NewHello that includes pre_shared_key itself cannot
+// resume under ECH: MarshalClientHello rejects a loaded PSK with a real ECH
+// config list ("PSK resumption with a custom ECH ClientHello is not
+// supported"), which would fail every connection after the first. ECH
+// connections therefore get no session cache and always perform a full
+// handshake. GREASE ECH takes neither path and resumes normally.
+func (pconn *persistConn) profileUTLSConfig(tlsConfig *tls.Config) *utls.Config {
+	config := utlsConfigFromTLS(tlsConfig, tlsConfig.ServerName)
+	config.PreferSkipResumptionOnNilExtension = true
+	config.OmitEmptyPsk = true
+
+	cache := pconn.t.profileState.sessionCache
+	if cache != nil && len(tlsConfig.EncryptedClientHelloConfigList) == 0 {
+		config.ClientSessionCache = cache
+		config.AlwaysIncludePSK = true
+	}
+
+	if pconn.cacheKey.onlyH1 {
+		config.NextProtos = []string{"http/1.1"}
+	}
+
+	return config
 }
 
 // handshakeWithTimeout runs the uTLS handshake with an optional timeout.
@@ -132,35 +147,15 @@ func handshakeWithTimeout(ctx context.Context, tlsConn *utls.UConn, timeout time
 	return err
 }
 
-func (f *Fingerprint) newClientHelloSpec() (*utls.ClientHelloSpec, error) {
-	if f.ClientHelloSpecFactory != nil {
-		spec, err := f.ClientHelloSpecFactory()
-		if err != nil {
-			return nil, err
-		}
-		if spec == nil {
-			return nil, errors.New("ClientHelloSpecFactory returned a nil spec")
-		}
-		if err := validateClientHelloExtensions(spec); err != nil {
-			return nil, err
-		}
-
-		return spec, nil
-	}
-	if f.ClientHelloSpec == nil {
-		return nil, errors.New("HelloCustom requires ClientHelloSpec or ClientHelloSpecFactory")
-	}
-
-	return cloneClientHelloSpec(f.ClientHelloSpec)
-}
-
 // utlsConfigFromTLS builds a utls.Config from an optional
-// crypto/tls.Config, translating fields that map one-to-one.
-// When tc is nil, the returned config has only ServerName set.
+// crypto/tls.Config, translating the fields that do not shape the
+// ClientHello. When tc is nil, the returned config has only ServerName set.
 //
-// Verification callbacks, static client certificates, Rand, Time, and
-// KeyLogWriter are translated. Session caches and certificate selection
-// callbacks use the uTLS types exposed by Fingerprint.
+// MinVersion, MaxVersion, CipherSuites, CurvePreferences, and
+// ClientSessionCache are not translated: the profile owns the ClientHello,
+// and the Transport rejects a TLSClientConfig that sets them. Verification
+// callbacks, client certificates and their selection callback, Rand, Time,
+// Renegotiation, KeyLogWriter, and the ECH settings are translated.
 func utlsConfigFromTLS(tc *tls.Config, serverName string) *utls.Config {
 	cfg := &utls.Config{
 		ServerName: serverName,
@@ -177,10 +172,6 @@ func utlsConfigFromTLS(tc *tls.Config, serverName string) *utls.Config {
 	cfg.Time = tc.Time
 	cfg.RootCAs = tc.RootCAs
 	cfg.NextProtos = tc.NextProtos
-	cfg.MinVersion = tc.MinVersion
-	cfg.MaxVersion = tc.MaxVersion
-	cfg.CipherSuites = tc.CipherSuites
-	cfg.CurvePreferences = convertCurveIDs(tc.CurvePreferences)
 	cfg.PreferServerCipherSuites = tc.PreferServerCipherSuites
 	cfg.SessionTicketsDisabled = tc.SessionTicketsDisabled
 	cfg.DynamicRecordSizingDisabled = tc.DynamicRecordSizingDisabled
@@ -210,7 +201,54 @@ func utlsConfigFromTLS(tc *tls.Config, serverName string) *utls.Config {
 		}
 	}
 
+	if get := tc.GetClientCertificate; get != nil {
+		cfg.GetClientCertificate = utlsGetClientCertificate(get)
+	}
+
 	return cfg
+}
+
+// utlsGetClientCertificate adapts a crypto/tls certificate selection
+// callback to uTLS. A nil certificate with a nil error, which crypto/tls
+// forbids, becomes an error instead of a panic during the handshake.
+//
+// The request passed to get has no handshake context: crypto/tls stores it
+// in an unexported field that only crypto/tls can set, so Context returns
+// nil. Callbacks that need a deadline must use their own.
+func utlsGetClientCertificate(get func(*tls.CertificateRequestInfo) (*tls.Certificate, error)) func(*utls.CertificateRequestInfo) (*utls.Certificate, error) {
+	return func(info *utls.CertificateRequestInfo) (*utls.Certificate, error) {
+		certificate, err := get(&tls.CertificateRequestInfo{
+			AcceptableCAs:    info.AcceptableCAs,
+			SignatureSchemes: toTLSSignatureSchemes(info.SignatureSchemes),
+			Version:          info.Version,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		if certificate == nil {
+			return nil, errors.New("fphttp: GetClientCertificate returned a nil certificate")
+		}
+
+		converted := toUTLSCertificate(*certificate)
+
+		return &converted, nil
+	}
+}
+
+// toTLSSignatureSchemes converts uTLS signature schemes to crypto/tls. Both
+// are the same uint16 registry values.
+func toTLSSignatureSchemes(schemes []utls.SignatureScheme) []tls.SignatureScheme {
+	if schemes == nil {
+		return nil
+	}
+
+	converted := make([]tls.SignatureScheme, len(schemes))
+	for index, scheme := range schemes {
+		converted[index] = tls.SignatureScheme(scheme)
+	}
+
+	return converted
 }
 
 // toUTLSCertificate converts a crypto/tls.Certificate to the equivalent
@@ -234,35 +272,38 @@ func toUTLSCertificate(c tls.Certificate) utls.Certificate {
 	return uc
 }
 
-// convertCurveIDs translates a slice of crypto/tls.CurveID to
-// utls.CurveID. Both are uint16 under the hood.
-func convertCurveIDs(in []tls.CurveID) []utls.CurveID {
-	if len(in) == 0 {
-		return nil
-	}
-
-	out := make([]utls.CurveID, len(in))
-	for i, c := range in {
-		out[i] = utls.CurveID(c)
-	}
-
-	return out
-}
-
+// configureUTLS builds the handshake state of a profile ClientHello and
+// applies the transport's policy to it: the ECH and renegotiation settings
+// of TLSClientConfig, then the protocols the connection may negotiate.
+// It marshals the final ClientHello.
 func (pconn *persistConn) configureUTLS(c *utls.UConn, config *utls.Config, original *tls.Config) error {
-	if c.ClientHelloID == utls.HelloGolang {
-		return nil
-	}
 	if err := c.BuildHandshakeState(); err != nil {
 		return err
 	}
+
 	if err := configureUTLSPolicy(c, config, original); err != nil {
 		return err
 	}
 
+	if err := pconn.filterApplicationProtocols(c); err != nil {
+		return err
+	}
+
+	if err := c.ApplyConfig(); err != nil {
+		return err
+	}
+
+	return c.MarshalClientHello()
+}
+
+// filterApplicationProtocols limits the ALPN and ALPS extensions to the
+// protocols this connection may use. A ClientHello that offers a protocol
+// the transport cannot speak, or none it can, is an error.
+func (pconn *persistConn) filterApplicationProtocols(c *utls.UConn) error {
 	protocols := pconn.t.protocols()
 	allowHTTP2 := protocols.HTTP2() && !pconn.cacheKey.onlyH1 && pconn.t.h2Transport != nil && !omitHTTP2Client
 	allowHTTP1 := protocols.HTTP1() || pconn.cacheKey.onlyH1
+
 	if !allowHTTP2 {
 		c.Extensions = slices.DeleteFunc(c.Extensions, func(extension utls.TLSExtension) bool {
 			switch extension.(type) {
@@ -275,28 +316,28 @@ func (pconn *persistConn) configureUTLS(c *utls.UConn, config *utls.Config, orig
 	}
 
 	for _, extension := range c.Extensions {
-		switch extension := extension.(type) {
-		case *utls.ALPNExtension:
-			filtered := slices.DeleteFunc(slices.Clone(extension.AlpnProtocols), func(protocol string) bool {
-				return (protocol == "h2" && !allowHTTP2) || (protocol == "http/1.1" && !allowHTTP1)
-			})
-			for _, protocol := range filtered {
-				if protocol != "h2" && protocol != "http/1.1" {
-					return fmt.Errorf("unsupported application protocol %q", protocol)
-				}
-			}
-			if len(filtered) == 0 {
-				return errors.New("ClientHello ALPN has no protocol enabled by the transport")
-			}
-			extension.AlpnProtocols = filtered
+		alpn, ok := extension.(*utls.ALPNExtension)
+		if !ok {
+			continue
 		}
+
+		filtered := slices.DeleteFunc(slices.Clone(alpn.AlpnProtocols), func(protocol string) bool {
+			return (protocol == "h2" && !allowHTTP2) || (protocol == "http/1.1" && !allowHTTP1)
+		})
+		for _, protocol := range filtered {
+			if protocol != "h2" && protocol != "http/1.1" {
+				return fmt.Errorf("unsupported application protocol %q", protocol)
+			}
+		}
+
+		if len(filtered) == 0 {
+			return errors.New("ClientHello ALPN has no protocol enabled by the transport")
+		}
+
+		alpn.AlpnProtocols = filtered
 	}
 
-	if err := c.ApplyConfig(); err != nil {
-		return err
-	}
-
-	return c.MarshalClientHello()
+	return nil
 }
 
 // convertUTLSConnectionState converts a utls ConnectionState to a

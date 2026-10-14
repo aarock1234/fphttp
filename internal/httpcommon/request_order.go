@@ -39,7 +39,7 @@ func orderRequestHeaders(enumerate func(func(string, string)), param EncodeHeade
 			return cmp.Compare(rankA, rankB)
 		})
 	}
-	if param.HeaderOrder != nil {
+	if len(param.HeaderOrder) > 0 {
 		ranks := headerRanks(param.HeaderOrder)
 		slices.SortStableFunc(headers, func(a, b requestHeaderField) int {
 			nameA := strings.ToLower(a.name)
