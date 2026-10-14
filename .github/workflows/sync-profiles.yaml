@@ -1,0 +1,69 @@
+name: Sync browser profiles
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-profiles
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Generate browser builds
+        run: go generate ./internal/catalog
+
+      - name: Detect changes
+        id: sync
+        run: |
+          if git diff --quiet -- internal/catalog; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify profiles
+        if: steps.sync.outputs.changed == 'true'
+        run: go run ./internal/cmd/verifyprofiles -cache-date "${{ steps.sync.outputs.date }}"
+
+      - name: Build
+        if: steps.sync.outputs.changed == 'true'
+        run: go build ./...
+
+      - name: Check production source
+        if: steps.sync.outputs.changed == 'true'
+        run: go run ./internal/cmd/checksource
+
+      - name: Check patch
+        if: steps.sync.outputs.changed == 'true'
+        run: git diff --check
+
+      - name: Create PR
+        if: steps.sync.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "sync: update browser profiles ${{ steps.sync.outputs.date }}"
+          branch: sync/profiles
+          title: "sync: update browser profiles ${{ steps.sync.outputs.date }}"
+          body: |
+            Regenerated `internal/catalog/builds_gen.go` from official browser release feeds through ${{ steps.sync.outputs.date }}.
+
+            Each row is the newest published build of a browser major version on one platform. Profile verification, production builds, formatting checks, static analysis, and patch checks must pass before this PR is created.
+          delete-branch: true

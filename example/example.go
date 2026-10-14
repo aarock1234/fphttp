@@ -1,3 +1,5 @@
+// Command example fetches the TLS and HTTP/2 fingerprint that tls.peet.ws
+// observes for a Chrome on Windows profile and prints it as JSON.
 package main
 
 import (
@@ -5,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"time"
@@ -12,6 +15,7 @@ import (
 	http "github.com/aarock1234/fphttp/v2"
 )
 
+// fingerprint is the part of the tls.peet.ws report this example prints.
 type fingerprint struct {
 	JA3Hash       string `json:"ja3_hash"`
 	JA4           string `json:"ja4"`
@@ -26,6 +30,8 @@ func main() {
 	}
 }
 
+// run sends one request with the newest Chrome on Windows profile and writes
+// the fingerprint the server observed to stdout.
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -42,6 +48,15 @@ func run() error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://tls.peet.ws/api/clean", nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
+	}
+
+	// The JSON call is a fetch() made by a page on tls.peet.ws, so the
+	// profile sends the headers a browser sends for that fetch.
+	req.Destination = http.DestinationEmpty
+	req.Initiator = &url.URL{
+		Scheme: "https",
+		Host:   "tls.peet.ws",
+		Path:   "/",
 	}
 	req.Header.Set("Accept", "application/json")
 
@@ -62,6 +77,7 @@ func run() error {
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "\t")
+
 	if err := encoder.Encode(f); err != nil {
 		return fmt.Errorf("write fingerprint: %w", err)
 	}

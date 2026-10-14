@@ -1,124 +1,49 @@
 # fphttp
 
-fphttp is a fork of Go's `net/http` with browser TLS profiles, header ordering, and HTTP/2 fingerprint controls. It keeps Go's client and server APIs, connection pooling, and request cancellation.
+[![Go Reference](https://pkg.go.dev/badge/github.com/aarock1234/fphttp/v2.svg)](https://pkg.go.dev/github.com/aarock1234/fphttp/v2)
+[![Release](https://img.shields.io/github/v/release/aarock1234/fphttp)](https://github.com/aarock1234/fphttp/releases)
+[![Go](https://img.shields.io/github/go-mod/go-version/aarock1234/fphttp)](go.mod)
+[![License: BSD 3 Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 
-Requires Go 1.27.2 or newer.
+fphttp is Go's `net/http` with real browser fingerprints. Change one import, add a profile, and your requests look
+like Chrome, Edge, Brave, Firefox, or Safari, from the TLS ClientHello to the order of the last header. Everything
+else is the `net/http` you know.
+
+It is the most accurate and complete browser TLS client for Go, with the most idiomatic API. It ships over 700
+profiles, shapes every layer above TCP (TLS, HTTP/2, header order and casing, request priority, client hints,
+cookies, and decoding), checks each wire against browser source or real captures, and does all of it through the
+plain `Client`, `Transport`, and `Request` types.
+
+## Why fphttp
+
+- **It is `net/http`.** A fork synced from Go main, not a wrapper around an old copy. A `Transport` without a
+  profile behaves exactly like Go's, and upstream fixes arrive through a scripted merge.
+- **One field to adopt.** Set `Transport.Profile`, or call `NewClient(profile)`. Your requests, contexts, and
+  middleware stay the same.
+- **Over 700 profiles.** Chrome, Edge, Brave, Firefox, Firefox ESR, and Safari on Windows, macOS, Linux, Android,
+  and iOS: 192 releases since January 2023. Ask for `"152"` and get the newest Chrome 152 build.
+- **Every layer, per release.** The exact ClientHello of each release, including whether it offers Kyber or ML-KEM,
+  plus HTTP/2 SETTINGS, window update, priority frames, pseudo header order, header order, and HTTP/1.1 casing.
+- **Browser behavior, not just bytes.** `Accept`, `Sec-Fetch-*`, `Origin`, `Referer`, priority, and client hints
+  follow what the request loads and which page asked for it. `Accept-CH` and `Critical-CH` are honored, cookies
+  follow the browser's credentials rules, and bodies are decoded.
+- **Checked against the browsers.** A verifier derives the wire of every Chrome, Edge, Brave, and Firefox major
+  from browser source at its release tag and compares it with the catalog. Safari comes from real captures. A
+  daily job imports new builds from official release feeds.
+- **Per request control on one pool.** Change header order, casing, or priority for one request without opening
+  new connections.
 
 ## Install
 
 ```sh
-go get github.com/aarock1234/fphttp@main
+go get github.com/aarock1234/fphttp/v2@latest
 ```
 
-## Versioned browser client
+Requires Go 1.27.2 or newer.
 
-The additive `browser` package resolves published product versions separately
-from their rendering engine, platform, device, channel, and configuration variant.
-It owns identity headers, transport pools, response decoding, redirects, and
-negotiated UA client hints. The low-level APIs below remain available.
+## Quick start
 
-```go
-profile, err := browser.Resolve(browser.Selector{
-	Browser:  http.BrowserChrome,
-	Platform: http.PlatformWindows,
-	Version:  "152",
-})
-if err != nil {
-	return err
-}
-
-client, err := browser.New(browser.Config{
-	Profile: profile,
-	Timeout: 20 * time.Second,
-})
-if err != nil {
-	return err
-}
-defer client.CloseIdleConnections()
-
-req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-if err != nil {
-	return err
-}
-resp, err := client.DoWithOptions(req, browser.RequestOptions{
-	Context: &browser.RequestContext{
-		Kind:           browser.Navigation,
-		UserActivation: true,
-		Languages:      []string{"en-US", "en"},
-	},
-})
-if err != nil {
-	return err
-}
-defer func() { _ = resp.Body.Close() }()
-```
-
-Import `github.com/aarock1234/fphttp/browser` alongside fphttp. `Do` supplies
-basic identity headers only. `DoWithOptions` accepts explicit navigation, fetch,
-or resource context; it does not infer browser activity from a URL. Supply an
-initiating origin for fetches and resources. Locale, device architecture, model,
-and OS hint values come from caller metadata rather than the running machine.
-Use `AcceptLanguage` for exact Apple language formatting.
-
-`Resolve` accepts an exact version or numeric prefix such as `"152"`. It selects
-the newest matching published build. `Available` reports whether an entry has
-a usable fingerprint; unavailable selections return `ErrUnavailable`.
-Descriptors include configuration sources and implementation notes.
-
-Request headers override generated values. A present nil or empty field
-suppresses generation; deleting it restores the default. `DefaultHeaders`
-provides client-wide overrides and `DisableHeaders` disables generation.
-`Config.Fingerprint` overrides wire behavior while retaining the selected identity;
-use the low-level transport for unrestricted uTLS configuration.
-
-`ResolveIdentity` selects known published identity metadata without requiring a
-catalog wire definition. Its `Fingerprint()` is nil; provide a deliberate
-`Config.Fingerprint` override when using that identity in a client. Unknown
-product builds remain errors.
-
-### Supported browsers
-
-Profiles support TLS hellos, HTTP/1.1 header controls, HTTP/2 settings and
-priorities, browser identity headers, and contextual client hints.
-
-| Browser | Platforms | Available configurations |
-| --- | --- | ---: |
-| Chrome | Windows, macOS, Linux, Android | 247 source defaults + 247 H2 SETTINGS GREASE variants = **494** |
-| Firefox | Windows, macOS, Linux, Android | 114 source defaults + 81 push-disabled variants = **195** |
-| Brave | Windows, macOS, Linux, Android | **192** product configurations with pinned Chromium engines |
-| Edge | Windows, macOS, Linux, Android | **1,144** Chromium-based configurations (`chromium-source-assumption`) |
-| Safari | macOS, iOS | **3** capture-based configurations (`existing-capture-family`) |
-
-The October 13, 2026 catalog contains **6,288 release/platform/channel entries**
-from releases published since January 2023, plus **1,475 configuration variants**:
-247 Chrome GREASE + 81 Firefox push-disabled + 1,144 Edge + 3 Safari.
-That yields **7,763 catalog entries**, including **2,028 available configurations**.
-Platform entries carry their own identity and release metadata; multiple entries
-can share the same TLS and H2 configuration. Other published builds are listed
-for identity selection with a custom fingerprint.
-
-Client hints are stored in memory per profile and origin for the client's
-lifetime. Explicit secure navigations can learn `Accept-CH`; eligible
-`Critical-CH` responses restart the original navigation with one shared
-deadline, a bounded count, and at most one restart per origin. GET and HEAD are
-eligible by default; other methods require `AllowReplay`, and bodies require
-`GetBody`. Unavailable metadata and suppressed hints never trigger a restart.
-Recognized `Clear-Site-Data` clears applicable state before processing opt-ins.
-Call `ClearClientHints` when clearing externally managed cookies or site state.
-
-Automatic cookie application and storage respect contextual credentials mode.
-An empty Cookie field suppresses automatic application. `Jar` appends scoped
-cookies after nonempty explicit values, following fphttp's ordinary rules;
-`CookiePolicy` owns custom merging, serialization, and response extraction.
-
-The decoder supports gzip, zlib or raw deflate, Brotli, and Zstandard, including
-stacked encodings. Advertising an encoding is version and destination aware.
-Returned response bodies belong to the caller. The operation deadline remains
-active while the body is read and is released on EOF, a read error, or Close.
-
-## Low-level browser profiles
-
-Import fphttp as `http` and set a profile on your transport. Reuse the client for subsequent requests.
+Import fphttp as `http`, pick a profile, and use the client like any other:
 
 ```go
 package main
@@ -130,7 +55,7 @@ import (
 	"os"
 	"time"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 func main() {
@@ -141,14 +66,14 @@ func main() {
 }
 
 func run() error {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Fingerprint = http.Chrome()
-	defer transport.CloseIdleConnections()
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   15 * time.Second,
+	profile, err := http.NewProfile(http.BrowserChrome, http.PlatformWindows, http.Latest)
+	if err != nil {
+		return fmt.Errorf("create profile: %w", err)
 	}
+
+	client := http.NewClient(profile)
+	client.Timeout = 30 * time.Second
+	defer client.CloseIdleConnections()
 
 	resp, err := client.Get("https://example.com")
 	if err != nil {
@@ -156,9 +81,6 @@ func run() error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("unexpected response status: %s", resp.Status)
-	}
 	if _, err := io.Copy(os.Stdout, resp.Body); err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}
@@ -167,152 +89,370 @@ func run() error {
 }
 ```
 
-Read successful response bodies to EOF and close them so connections can be reused. Use request contexts and client deadlines to bound request lifetime.
+`client.Get` sends a page load, as Chrome does when you type the URL. `NewClient` returns an ordinary
+`*http.Client` with a `Transport` of its own, so set `Jar`, `Timeout`, or `CheckRedirect` on it as usual.
 
-Profiles control protocol settings and header order. Supply your own User-Agent, client hints, cookies, and other browser headers. Only advertise encodings your application can decode; fphttp automatically decodes gzip.
+fphttp's types are distinct from `net/http`'s. Use its own `cookiejar`, `httptrace`, `httputil`, and `httptest`
+packages alongside it.
 
-fphttp's request, response, and transport types are distinct from those in `net/http`.
+## Choosing a profile
 
-## Profiles
+`NewProfile` takes a browser, a platform, and a version, and returns the profile of that release.
 
-Choose a constructor directly or select a browser and platform:
+| Call                                                      | Selects                                                   |
+| --------------------------------------------------------- | --------------------------------------------------------- |
+| `NewProfile(BrowserChrome, PlatformWindows, Latest)`      | The newest Chrome on Windows                              |
+| `NewProfile(BrowserChrome, PlatformMac, "152")`           | The newest build of Chrome 152 on macOS                   |
+| `NewProfile(BrowserChrome, PlatformMac, "152.0.7977.85")` | That build as given; any build of a supported major works |
+| `NewProfile(BrowserBrave, PlatformLinux, "1.90")`         | Brave 1.90, reported as `1.90.128`                        |
+| `NewProfile(BrowserBrave, PlatformLinux, "148")`          | The Brave line built on Chromium 148, which is 1.90       |
+| `NewProfile(BrowserFirefox, PlatformAndroid, "150")`      | The newest build of Firefox 150 on Android                |
+| `NewProfile(BrowserFirefoxESR, PlatformWindows, "140")`   | The newest build of Firefox ESR 140                       |
+| `NewProfile(BrowserSafari, PlatformIOS, "27")`            | Safari 27.0 on iPhone                                     |
+
+A profile knows its release. `String` reports `Chrome 152.0.7977.85 on macOS` or
+`Brave 1.90.128 (Chromium 148) on Linux`, and the `Browser`, `Platform`, and `Version` methods return the parts.
+
+The `Browser`, `Platform`, and `Version` types are strings, so values from flags or configuration convert directly.
+Check failures with `errors.Is`:
 
 ```go
-profile := http.Profile(http.BrowserChrome, http.PlatformMac)
+func profileFor(browser, platform, version string) (*http.Profile, error) {
+	profile, err := http.NewProfile(
+		http.Browser(browser),
+		http.Platform(platform),
+		http.Version(version),
+	)
+
+	switch {
+	case errors.Is(err, http.ErrVersionTooNew):
+		slog.Warn("browser version not cataloged yet",
+			slog.String("using", profile.String()),
+			slog.Any("error", err),
+		)
+
+		return profile, nil
+
+	case err != nil:
+		return nil, fmt.Errorf("select browser profile: %w", err)
+	}
+
+	return profile, nil
+}
 ```
 
-| Constructors | Baseline |
-| --- | --- |
-| `Chrome()`, `Chrome148()`, `Chrome148Fetch()` | Windows Chrome 148 navigation and fetch |
-| `Chrome120()`, `Chrome131()`, `Chrome133()` | Versioned uTLS Chrome presets |
-| `ChromeMac()`, `ChromeMacFetch()` | Captured Mac Chrome HTTP/2 behavior with supported Chrome 133 TLS |
-| `Chrome154MacHTTP2()`, `Chrome154MacHTTP2Fetch()` | Mac Chrome 154 HTTP/2 behavior; TLS stays with your dialer or `crypto/tls` |
-| `Safari()`, `Safari27()`, `Safari27Fetch()` | Mac Safari 27 navigation and fetch |
-| `Safari26()` | Published Mac Safari 26.0.1 baseline |
-| `SafariIOS()`, `SafariIOS27()`, `SafariIOS27Fetch()` | iPhone Safari 27.0.1 navigation and fetch |
-| `Firefox()`, `Firefox144()` | Published Firefox 144 baseline |
-| `Firefox120()` | Historical Firefox 120 TLS and HTTP/2 priority tree |
-| `Edge()`, `Brave()`, `ChromeAndroid()` | Shared Chromium baseline, without separate browser captures |
+| Error                    | Cause                                                       | Profile            |
+| ------------------------ | ----------------------------------------------------------- | ------------------ |
+| `ErrUnknownBrowser`      | Not one of the `Browser` constants                          | nil                |
+| `ErrUnknownPlatform`     | Not one of the `Platform` constants                         | nil                |
+| `ErrUnsupportedPlatform` | The browser has no profile there, such as Safari on Windows | nil                |
+| `ErrUnknownVersion`      | Malformed, older than the oldest release, or left out       | nil                |
+| `ErrVersionTooNew`       | Newer than the newest release                               | The newest release |
 
-`Profile` returns `nil` for unsupported combinations. iOS and iPadOS selections use the captured WebKit profile. Browser builds using another engine need a custom profile.
+`ErrVersionTooNew` works like `strconv.ParseInt` with `ErrRange`: you get a usable value and decide whether the
+difference matters.
 
-The legacy Mac Chrome constructors retain their original Chrome 133 TLS baseline.
-The versioned catalog constructs newer hellos with the pinned upstream uTLS
-capabilities, including ML-DSA and trust-anchor advertisement where reviewed
-source enables them. Use the versioned catalog to select newer browser builds.
+## Full control
 
-Chromium shuffles TLS extensions. Browsers also generate fresh GREASE values and key material, so profiles do not replay fixed JA3 strings. Header order follows the captures; header values and other browser behavior remain your application's responsibility.
-
-The published baselines come from [Safari 26.0.1](https://github.com/lexiforest/curl-impersonate/blob/3f5d207ba9101a779a65ced1288c32aeec762d66/tests/signatures/safari_26.0.1_macOS.yaml) and [Firefox 144](https://github.com/lexiforest/curl-impersonate/blob/3f5d207ba9101a779a65ced1288c32aeec762d66/tests/signatures/firefox_144.0.0_linux.yaml) captures. The Firefox capture identifies macOS despite its filename.
-
-## Request overrides
-
-Change header order or priority for individual requests while keeping one connection pool:
+`NewClient` is a shortcut. A profile is one field on an ordinary `Transport`, so everything Go lets you configure
+still applies:
 
 ```go
-req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+func newClient(profile *http.Profile) (*http.Client, error) {
+	proxyURL, err := url.Parse("http://user:pass@proxy.example.com:8080")
+	if err != nil {
+		return nil, fmt.Errorf("parse proxy url: %w", err)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("create cookie jar: %w", err)
+	}
+
+	transport := &http.Transport{
+		Profile: profile,
+		Proxy:   http.ProxyURL(proxyURL),
+		TLSClientConfig: &tls.Config{
+			ServerName:         "example.com",
+			InsecureSkipVerify: true, // for a test server only
+		},
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConnsPerHost:   10,
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Jar:       jar,
+		Timeout:   30 * time.Second,
+	}
+
+	return client, nil
+}
+```
+
+`cookiejar` here is `github.com/aarock1234/fphttp/v2/cookiejar`. With a profile, HTTP/2 stays available alongside
+a custom `TLSClientConfig` or dialer, as in a browser, so `ForceAttemptHTTP2` is not needed.
+
+The profile owns the ClientHello and `TLSClientConfig` owns trust and identity:
+
+| `TLSClientConfig` fields                                                                      | With a profile                                     |
+| --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `ServerName`, `InsecureSkipVerify`, `RootCAs`, `Certificates`, `GetClientCertificate`         | Honored as in Go                                   |
+| `VerifyPeerCertificate`, `VerifyConnection`, `KeyLogWriter`, `EncryptedClientHelloConfigList` | Honored as in Go                                   |
+| `SessionTicketsDisabled`                                                                      | Turns off the Transport's session cache            |
+| `MinVersion`, `MaxVersion`, `CipherSuites`, `CurvePreferences`, `ClientSessionCache`          | Fail the first request; edit `Profile.TLS` instead |
+
+The last row only conflicts while `Profile.TLS.NewHello` is set. With a nil `NewHello`, crypto/tls performs the
+handshake and honors every field.
+
+## Requests like a page
+
+A browser sends different fields for a page, a script, an image, and a `fetch()` call. Two request fields tell
+fphttp which one it is sending: `Destination`, the kind of resource, and `Initiator`, the page that asked for it.
+The zero `Destination` is a page load, and a nil `Initiator` means the user started it, as when typing a URL.
+
+```go
+req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://shop.example.com/api/cart", nil)
 if err != nil {
-	return err
+	return fmt.Errorf("create request: %w", err)
 }
 
-fetch := http.Chrome148Fetch()
-req.HeaderOrder = fetch.HeaderOrder
-req.H2Priority = new(fetch.H2.HeaderPriority)
+// A fetch() call made by the checkout page.
+req.Destination = http.DestinationEmpty
+req.Initiator = &url.URL{
+	Scheme: "https",
+	Host:   "shop.example.com",
+	Path:   "/checkout",
+}
 req.Header.Set("Accept", "application/json")
-req.H2PriorityHeader = "u=1, i"
+
+resp, err := client.Do(req)
+if err != nil {
+	return fmt.Errorf("fetch cart: %w", err)
+}
+defer func() { _ = resp.Body.Close() }()
 ```
 
-Non-nil request orders override the transport profile. An empty slice selects Go's default order. Unlisted regular headers follow in sorted order. Clones and redirects preserve these overrides.
+From those two fields fphttp derives `Sec-Fetch-Site`, `Sec-Fetch-Mode`, `Sec-Fetch-Dest`, `Origin` where the
+browser sends one, `Referer`, the default `Accept`, the request priority, the subresource header order, and
+whether `Client.Jar` adds cookies. A field you set wins over the generated one. The Client carries both fields to
+every redirect hop.
 
-`H2Priority.Enabled` controls whether a request sends legacy HEADERS priority. Set it to `true` for custom priorities. `Weight` is the wire value, from 0 to 255, representing effective weights 1 to 256. A request priority with `Enabled: false` suppresses the signal.
+| `Destination`                                                              | Use it for                                    | `Sec-Fetch-Mode` | Cookies from `Client.Jar`      |
+| -------------------------------------------------------------------------- | --------------------------------------------- | ---------------- | ------------------------------ |
+| Zero value, `DestinationDocument`                                          | A page load: typing a URL or following a link | `navigate`       | Yes                            |
+| `DestinationIframe`, `DestinationFrame`                                    | A page inside a frame                         | `navigate`       | Yes                            |
+| `DestinationEmpty`                                                         | `fetch()` and `XMLHttpRequest`                | `cors`           | Only to the initiator's origin |
+| `DestinationScript`, `DestinationStyle`, `DestinationImage`                | Scripts, style sheets, and images             | `no-cors`        | Yes                            |
+| `DestinationFont`, `DestinationManifest`                                   | Web fonts and app manifests                   | `cors`           | Only to the initiator's origin |
+| `DestinationAudio`, `DestinationVideo`                                     | Media; Chromium also sends `Range: bytes=0-`  | `no-cors`        | Yes                            |
+| `DestinationWorker`, `DestinationSharedWorker`, `DestinationServiceWorker` | Worker scripts                                | `same-origin`    | Only to the initiator's origin |
 
-`H2PriorityHeader` supplies an extensible Priority field only over H2. An
-explicit `Header["Priority"]`, including a suppression marker, takes precedence.
-The generated field is last unless an explicit order lists its position. The
-browser client generates it only for reviewed builds and request contexts.
+Only page loads send `Sec-Fetch-User: ?1`. For a navigation started by a script, set `Sec-Fetch-User` to an empty
+value. Set `Initiator` to the page's full URL rather than its origin, because `Referer` comes from it. A
+`Destination` that is not one of the constants fails the request.
 
-## Custom profiles
+## Per request order and casing
 
-Clone a profile before changing it, then validate your configuration:
+These fields change one request and share the connection pool with every other request:
 
 ```go
-profile := http.Chrome148().Clone()
-profile.HeaderOrder = []string{
-	"Host",
-	"User-Agent",
-	"Accept",
-	"Accept-Encoding",
+req.HeaderOrder = []string{"Host", "User-Agent", "X-Csrf-Token", "Accept"}
+req.H1HeaderCase = map[string]string{
+	"X-Csrf-Token": "X-CSRF-Token",
+}
+req.PseudoHeaderOrder = []string{":method", ":path", ":authority", ":scheme"}
+req.H2Priority = &http.H2Priority{
+	Enabled:   true,
+	Exclusive: true,
+	Weight:    219,
+}
+req.H2PriorityHeader = "u=2"
+```
+
+| Setting             | Request field                                 | Falls back to                                                                      | Rule                                                                                        |
+| ------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Header values       | `Header`                                      | `Profile.Header`, then generated fields                                            | A present but empty value suppresses the field                                              |
+| Header order        | `HeaderOrder`                                 | `Profile.SubresourceHeaderOrder` for subresources, otherwise `Profile.HeaderOrder` | Names match ignoring case; unlisted fields follow sorted; an empty slice selects Go's order |
+| HTTP/1.1 casing     | `H1HeaderCase`                                | The spelling of your own header keys, then `Profile.H1HeaderCase`                  | Merged per field, request first; HTTP/2 is always lowercase                                 |
+| Pseudo header order | `PseudoHeaderOrder`                           | `Profile.PseudoHeaderOrder`                                                        | Lists all four; an empty slice selects Go's order                                           |
+| HEADERS priority    | `H2Priority`                                  | The release's priority for the `Destination`                                       | `Enabled: false` sends none                                                                 |
+| `Priority` field    | `Header["Priority"]`, then `H2PriorityHeader` | The release's value for the `Destination`                                          | `H2PriorityHeader` is sent on HTTP/2 only                                                   |
+
+An empty slice here means empty but not nil; a nil field falls back. Clones and redirects keep every override.
+
+## Customizing a profile
+
+`NewProfile` returns a profile you own. Change its fields before a Transport first uses it, and use `Clone` to
+derive variants. The Transport validates its copy, and a profile it cannot send fails every request with an error
+listing each problem.
+
+**Headers.** `Header` starts with `User-Agent` and `Accept-Language`. Every other browser field is generated per
+request unless `Header` or the request sets it, and an empty value suppresses one:
+
+```go
+profile.Header.Set("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+profile.Header.Set("Dnt", "1")
+profile.Header.Set("Priority", "")
+```
+
+**HTTP/1.1 casing.** Keys match ignoring case, and each value respells its key:
+
+```go
+if profile.H1HeaderCase == nil {
+	profile.H1HeaderCase = make(map[string]string)
 }
 
-if err := profile.Validate(); err != nil {
-	return err
+profile.H1HeaderCase["X-Csrf-Token"] = "X-CSRF-Token"
+```
+
+**HTTP/2.** SETTINGS go out in slice order and must include `ENABLE_PUSH = 0`:
+
+```go
+for i, setting := range profile.HTTP2.Settings {
+	if setting.ID == http.H2SettingInitialWindowSize {
+		profile.HTTP2.Settings[i].Val = 1 << 20
+	}
 }
 ```
 
-Keep profiles and TLS configuration immutable after the transport starts using them. A nil fingerprint uses Go's TLS and HTTP defaults.
+Changing `HeaderPriority`, `InitialStreamID`, `InitPriorityFrames`, or `NO_RFC7540_PRIORITIES` gives every request
+`HeaderPriority`, because the release's priorities for each destination no longer apply.
 
-`Fingerprint.H2` controls ordered SETTINGS, the connection-window increment, the first stream ID, and optional priority frames. Custom SETTINGS must include `ENABLE_PUSH = 0`. `ConnectionFlow` adds to the initial 65,535-byte window. Zero uses Go's increment. `InitialStreamID` must be an odd 31-bit value; zero uses stream 1.
+**TLS.** `NewHello` returns a fresh ClientHello for each connection. Bring your own, here a uTLS preset with
+`utls` imported from `github.com/refraction-networking/utls`:
 
-`H2.SettingsFactory` supplies fresh ordered settings once per connection and
-cannot accompany static `Settings`. The returned settings are validated before
-the connection is used. Factories must be concurrency safe. `H1HeaderCase` maps
-canonical field names to their HTTP/1.1 spelling, including framing fields and
-trailers; it does not affect H2 lowercase encoding. Request-level maps override
-transport maps, and an empty map disables spelling overrides.
+```go
+profile.TLS.NewHello = func() (*utls.ClientHelloSpec, error) {
+	spec, err := utls.UTLSIdToSpec(utls.HelloChrome_133)
+	if err != nil {
+		return nil, fmt.Errorf("build chrome 133 hello: %w", err)
+	}
 
-Header names must be canonical and unique. A custom pseudo-header order must contain `:method`, `:authority`, `:scheme`, and `:path` exactly once. Setting `NO_RFC7540_PRIORITIES = 1` cannot be combined with legacy priority signals. External HTTP/2 transports cannot be combined with a fingerprint.
+	return &spec, nil
+}
+```
 
-For TLS, choose a uTLS `ClientHelloID` or provide a custom `ClientHelloSpec` or `ClientHelloSpecFactory`. A zero `ClientHelloID` keeps `crypto/tls`. Custom specs cannot be combined with a named preset.
+It must be safe for concurrent use and leave the session ticket and `pre_shared_key` extensions empty, because the
+Transport fills them from its session cache. A nil `NewHello` uses crypto/tls.
 
-Templates copy supported extensions for each connection. Stateful or third-party extensions require a factory that returns fresh, independently owned state. Factories may be called concurrently.
+**Wire only.** A nil `Header` turns off every generated field:
 
-The uTLS integration honors supported TLS restrictions, roots, verification callbacks, and static client certificates. Use `Fingerprint.GetClientCertificate` for dynamic certificate selection and `Fingerprint.ClientSessionCache` for a concurrent uTLS session cache. A nil cache disables resumption. Resumption also needs a preset with a compatible PSK extension.
+```go
+wireOnly := profile.Clone()
+wireOnly.Header = nil
+```
 
-HTTPS proxies use a separate TLS handshake before the CONNECT tunnel. The origin profile applies inside that tunnel. ALPN advertises only protocols the transport can use.
+fphttp then sends only your headers, including your own `User-Agent`, with the profile's TLS, HTTP/2, order, and
+casing. A `Profile` literal behaves the same way, since it has no release to generate fields from.
 
-`Response.TLS` contains converted uTLS metadata, including the negotiated curve,
-HelloRetryRequest status, and local certificate. `ExportKeyingMaterial` is not
-available through the converted state; retain your own uTLS connection if needed.
+## How it behaves
 
-## TCP and HTTP/3
+| Topic              | Behavior                                                                                                                                                                                                                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No profile         | A `Transport` with a nil `Profile` behaves exactly like Go's.                                                                                                                                                              |
+| First use          | The Transport copies its `Profile` on first use and ignores later edits. Use a new `Transport` or `Transport.Clone` to apply them.                                                                                         |
+| TLS                | `Profile.TLS` owns the ClientHello; `TLSClientConfig` owns trust and identity. Conflicting fields fail the first request.                                                                                                  |
+| Session resumption | Each `Transport` resumes TLS sessions from a cache of its own. `TLSClientConfig.SessionTicketsDisabled` turns it off. Connections configured with an `EncryptedClientHelloConfigList` never resume.                        |
+| Protocols          | HTTP/1.1 and HTTP/2. A profile with HTTP/3 in `Protocols`, or with an `h2` entry in `TLSNextProto`, fails every request.                                                                                                   |
+| Go's defaults      | With a profile, Go never adds its own `User-Agent` or `Accept-Encoding: gzip`.                                                                                                                                             |
+| Client hints       | Chromium profiles send `Sec-CH-UA`, `Sec-CH-UA-Mobile`, and `Sec-CH-UA-Platform` to secure origins. Other hints follow `Accept-CH` from page loads, remembered per `Transport` and origin. `Clear-Site-Data` forgets them. |
+| Critical-CH        | The Client restarts a page load when `Critical-CH` names a hint it lacked: once per origin, at most ten times per call, within the same deadline. GET and HEAD only; bodies need `GetBody`.                                |
+| Referer            | Built from `Initiator` and the newest `Referrer-Policy` on the redirect chain, `strict-origin-when-cross-origin` by default. A `Referer` you set is kept.                                                                  |
+| Cookies            | `Client.Jar` works as usual, within the credentials rules of the `Destination`. An empty `Cookie` field declines jar cookies on any request that is not a navigation.                                                      |
+| Credentials        | `Authorization`, `Cookie`, and the other credential fields in `Profile.Header` are sent only while redirects stay on the first host or its subdomains.                                                                     |
+| Decompression      | When the profile supplied `Accept-Encoding`, bodies are decoded as you read them: gzip, deflate, br, zstd, and stacked codings. Your own `Accept-Encoding` gets the raw body. `DisableCompression` turns decoding off.     |
+| Proxies            | HTTP, HTTPS, and SOCKS5 work as in Go. CONNECT carries the profile's `User-Agent`, and Chromium profiles send `Proxy-Connection: keep-alive` as Chrome does. The TLS session with an HTTPS proxy uses crypto/tls.          |
+| Custom dialers     | `DialTLSContext` owns TLS, so the profile's ClientHello does not apply there. HTTP/2 and header settings still do.                                                                                                         |
+| TCP                | fphttp shapes what your process sends. TCP options, window sizes, and TTL follow your host or proxy.                                                                                                                       |
 
-Selecting a profile does not change your operating system's TCP stack. TCP options, receive windows, and TTL depend on the host and network path. Match the host or proxy egress environment when you need its TCP fingerprint.
+## Supported browsers
 
-HTTP/3 is a future transport option. [quic-go](https://quic-go.net/docs/http3/client/)
-provides an H3 client; [uQUIC](https://github.com/refraction-networking/uquic)
-adds QUIC packet and hello controls. Integration would cover QUIC parameters,
-H3 SETTINGS, QPACK, priorities, discovery, and fallback.
+| Browser     | Windows                 | macOS                   | Linux                   | Android      | iOS  |
+| ----------- | ----------------------- | ----------------------- | ----------------------- | ------------ | ---- |
+| Chrome      | 108 to 156              | 109 to 156              | 109 to 155              | 110 to 156   |      |
+| Edge        | 119 to 155              | 119 to 155              | 119 to 155              | 140 to 155   |      |
+| Brave       | 1.46 to 1.97            | 1.46 to 1.97            | 1.46 to 1.97            | 1.56 to 1.97 |      |
+| Firefox     | 108 to 158              | 108 to 158              | 108 to 158              | 126 to 158   |      |
+| Firefox ESR | 102, 115, 128, 140, 153 | 102, 115, 128, 140, 153 | 102, 115, 128, 140, 153 |              |      |
+| Safari      |                         | 26.0, 27.0              |                         |              | 27.0 |
 
-## Maintain the fork
+As of October 2026 that is 707 profiles for 192 releases, built from 31 distinct wire configurations. Each version
+resolves to the newest build of its release line, and the daily sync picks up new builds as browsers publish them.
 
-The production HTTP sources follow [Go main at `e60b4c3`](https://github.com/golang/go/tree/e60b4c37fa344513cdecfffe6efc3ca48c4a6cb2/src/net/http).
-`.stdlib-version` records the exact revision. Browser TLS uses the existing
-upstream uTLS module, pinned at [commit `ff1b50f`](https://github.com/refraction-networking/utls/tree/ff1b50fbbe9a).
-Profiles live in fphttp; no separate uTLS fork or automatic dependency updater
-is introduced.
+- Brave 1.46 to 1.97 are built on Chromium 108 to 155, and `NewProfile` accepts either number.
+- Edge before 119 on desktop and before 140 on Android, Chrome 109 on Android, and Brave 1.46 to 1.52 on Android
+  are left out, because their `User-Agent` cannot be reproduced exactly.
+- iPadOS, and browsers other than Safari on iOS, return `ErrUnsupportedPlatform`. Safari covers captured releases
+  only and is never extrapolated.
+- Firefox 131 and older, ESR 102, and ESR 115 allowed HTTP/2 server push by default. fphttp cannot accept push, so
+  those profiles send what Firefox sends with push turned off: `ENABLE_PUSH = 0` and `MAX_CONCURRENT_STREAMS = 0`.
 
-Sync a new Go revision and check the resulting code:
+## Upgrading from v1
+
+| v1                                                                                                 | v2                                                                               |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `github.com/aarock1234/fphttp`                                                                     | `github.com/aarock1234/fphttp/v2`                                                |
+| `Transport.Fingerprint`                                                                            | `Transport.Profile`                                                              |
+| `Chrome()`, `Chrome148()`, `ChromeMac()`, `Firefox120()`, `Safari27()`, and the other constructors | `NewProfile(browser, platform, version)`                                         |
+| `Profile(browser, platform)`                                                                       | `NewProfile(browser, platform, Latest)`                                          |
+| `Chrome148Fetch()`, `Safari27Fetch()`, and the other fetch constructors                            | `Request.Destination = DestinationEmpty` with `Request.Initiator`                |
+| `browser.Resolve(browser.Selector{...})`                                                           | `NewProfile`, with errors checked by `errors.Is`                                 |
+| `browser.New(browser.Config{...})`                                                                 | `NewClient(profile)`, or a `Client` and `Transport` you build                    |
+| `Client.DoWithOptions` with a `RequestContext`                                                     | `Client.Do` with `Request.Destination` and `Request.Initiator`                   |
+| `RequestContext.UserActivation`                                                                    | Page loads send `Sec-Fetch-User: ?1`; set it empty to drop it                    |
+| `RequestContext.Languages`, `RequestContext.AcceptLanguage`                                        | `Accept-Language` in `Profile.Header`                                            |
+| `Config.DefaultHeaders`                                                                            | `Profile.Header`                                                                 |
+| `Config.DisableHeaders`                                                                            | `Profile.Header = nil`                                                           |
+| `Config.Fingerprint`                                                                               | Edit `Profile.TLS`, `Profile.HTTP2`, and the orders                              |
+| `Config.Timeout`, `Config.Jar`, `Config.CheckRedirect`                                             | The same fields on `Client`                                                      |
+| `Config.CookiePolicy`                                                                              | Any `CookieJar` in `Client.Jar`                                                  |
+| `Config.DisableDecompression`                                                                      | `Transport.DisableCompression`                                                   |
+| `Client.ClearClientHints`                                                                          | A new `Transport`; hints are remembered per `Transport`                          |
+| `RequestOptions.AllowReplay`                                                                       | Removed; `Critical-CH` restarts GET and HEAD only                                |
+| `Fingerprint.ClientHelloID`, `ClientHelloSpec`, `ClientHelloSpecFactory`                           | `Profile.TLS.NewHello`                                                           |
+| `Fingerprint.ClientSessionCache`                                                                   | Automatic per `Transport`; `TLSClientConfig.SessionTicketsDisabled` turns it off |
+| `Fingerprint.GetClientCertificate`                                                                 | `TLSClientConfig.GetClientCertificate`                                           |
+| `Fingerprint.H2`, `H2Fingerprint`                                                                  | `Profile.HTTP2`, `HTTP2Profile`                                                  |
+| `H2Fingerprint.SettingsFactory`                                                                    | Removed                                                                          |
+| `Fingerprint.Clone`, `Fingerprint.Validate`                                                        | `Profile.Clone`; validation runs when a Transport first uses the profile         |
+
+## Maintaining
+
+Production sources track [Go main at `e60b4c3`](https://github.com/golang/go/tree/e60b4c37fa344513cdecfffe6efc3ca48c4a6cb2/src/net/http),
+recorded in `.stdlib-version`. TLS uses upstream uTLS pinned at
+[`ff1b50f`](https://github.com/refraction-networking/utls/tree/ff1b50fbbe9a), with no separate fork. Browser
+knowledge lives in `internal/catalog` as Go source: a generated release table plus wire configurations written by
+hand from browser source and captures.
 
 ```sh
 go run ./internal/cmd/syncstdlib -ref master
+go generate ./internal/catalog
+go run ./internal/cmd/verifyprofiles
 go build ./...
+go build -tags nethttpomithttp2 ./...
 go run ./internal/cmd/checksource
 git diff --check
 ```
 
-The sync stages three-way merges before writing checkout files and stops on conflicts. A filesystem write failure can leave a partial diff. `checksource` checks formatting and vets production code.
+| Tool                          | Purpose                                                                                                        |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `internal/cmd/syncstdlib`     | Merges a Go revision into the fork and stops on conflicts                                                      |
+| `internal/cmd/syncprofiles`   | Regenerates `internal/catalog/builds_gen.go` from official release feeds; run it with `go generate`            |
+| `internal/cmd/verifyprofiles` | Derives each major's wire from browser source, compares it with the catalog, and reports releases with no wire |
+| `internal/cmd/observe`        | Sends requests to `tls.but.sh` and records what the server saw; `-catalog` lists every supported release       |
+| `internal/cmd/checksource`    | Checks formatting and vets production sources                                                                  |
 
-`internal/cmd/syncprofiles` imports primary release metadata and reviewed source
-defaults into the checked-in catalog. It is a manually invoked catalog tool;
-it does not update uTLS. Review generated source mappings and coverage before
-shipping a catalog change. `internal/cmd/observe` makes bounded live requests to
-`https://h1.tls.but.sh/api/network` and `https://h2.tls.but.sh/api/network`, emitting
-the selected descriptor and server observations. Protocol restrictions are
-explicitly reported because they also alter the offered hello. These captures
-describe fphttp traffic; they are not evidence of a real browser capture.
+The `sync-profiles` workflow runs daily. It regenerates the release table, runs `verifyprofiles`, builds, checks
+the source, and opens a pull request. A new major with no wire in `internal/catalog` fails verification until one
+is added. The `sync-stdlib` workflow runs on demand for a new Go revision, and releases are cut by hand with
+`release.yaml`.
 
-The standalone fork uses local copies of private HTTP helpers, a bounded MIME parser, and owned HTTP/2 writer-result channels. Runtime aliases are removed. The local `GODEBUG` adapter reads environment settings without runtime metrics or module defaults.
+Observations describe fphttp's own traffic, not a browser capture. `httptest/server.go` stays on Go 1.26.5 because
+newer code needs runtime support.
 
-`httptest/server.go` and its certificate helper retain Go 1.26.5 because the newer code needs runtime support. Private HTTP/3 sources and existing test files are excluded from the production sync.
+## License
 
-Go's copied sources retain their BSD license in [LICENSE](LICENSE).
+Go's copied sources keep their [BSD license](LICENSE).

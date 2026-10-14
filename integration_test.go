@@ -27,11 +27,12 @@ type peetResponse struct {
 }
 
 func TestIntegration_ChromeFingerprint(t *testing.T) {
-	client := &http.Client{
-		Transport: &http.Transport{
-			Fingerprint: http.Chrome(),
-		},
+	profile, err := http.NewProfile(http.BrowserChrome, http.PlatformWindows, http.Latest)
+	if err != nil {
+		t.Fatalf("NewProfile() error: %v", err)
 	}
+
+	client := http.NewClient(profile)
 
 	req, err := http.NewRequest("GET", "https://tls.peet.ws/api/all", nil)
 	if err != nil {
@@ -88,11 +89,13 @@ func TestIntegration_ChromeFingerprint(t *testing.T) {
 }
 
 func TestIntegration_FirefoxFingerprint(t *testing.T) {
-	client := &http.Client{
-		Transport: &http.Transport{
-			Fingerprint: http.Firefox(),
-		},
+	// Firefox 120 still sends the legacy HTTP/2 priority tree.
+	profile, err := http.NewProfile(http.BrowserFirefox, http.PlatformWindows, "120")
+	if err != nil {
+		t.Fatalf("NewProfile() error: %v", err)
 	}
+
+	client := http.NewClient(profile)
 
 	req, err := http.NewRequest("GET", "https://tls.peet.ws/api/all", nil)
 	if err != nil {
@@ -149,7 +152,7 @@ func TestIntegration_FirefoxFingerprint(t *testing.T) {
 		t.Errorf("expected WINDOW_UPDATE frame in sent_frames")
 	}
 	if !hasPriority {
-		t.Errorf("expected PRIORITY frame in sent_frames (Firefox sends InitPriorityFrames)")
+		t.Errorf("expected PRIORITY frame in sent_frames (Firefox 120 sends the legacy priority tree)")
 	}
 }
 
@@ -200,34 +203,34 @@ func TestIntegration_NilFingerprint(t *testing.T) {
 // TestIntegration_HPACKDynamicTableGrowth exercises the HPACK decoder against
 // a server (Cloudflare's edge fronting cloudflare.com) that emits dynamic
 // table size updates above the 4096-byte default. Before the decoder size
-// was sourced from Fingerprint.H2.Settings, the Chrome profile would announce
+// was sourced from Profile.HTTP2.Settings, the Chrome profile would announce
 // SETTINGS_HEADER_TABLE_SIZE=65536 while the local decoder remained capped
 // at 4096, so the first oversized update would terminate the connection
 // with COMPRESSION_ERROR. This test fails the same way without that fix.
 func TestIntegration_HPACKDynamicTableGrowth(t *testing.T) {
 	tests := []struct {
-		name string
-		fp   *http.Fingerprint
+		name     string
+		browser  http.Browser
+		platform http.Platform
 	}{
-		{"chrome", http.Chrome()},
-		{"firefox", http.Firefox()},
-		{"safari", http.Safari()},
+		{"chrome", http.BrowserChrome, http.PlatformWindows},
+		{"firefox", http.BrowserFirefox, http.PlatformWindows},
+		{"safari", http.BrowserSafari, http.PlatformMac},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &http.Client{
-				Transport: &http.Transport{
-					Fingerprint: tt.fp,
-				},
+			profile, err := http.NewProfile(tt.browser, tt.platform, http.Latest)
+			if err != nil {
+				t.Fatalf("NewProfile() error: %v", err)
 			}
+
+			client := http.NewClient(profile)
 
 			req, err := http.NewRequest("GET", "https://www.cloudflare.com/", nil)
 			if err != nil {
 				t.Fatalf("NewRequest() error: %v", err)
 			}
-			req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-			req.Header.Set("Accept", "*/*")
 
 			resp, err := client.Do(req)
 			if err != nil {

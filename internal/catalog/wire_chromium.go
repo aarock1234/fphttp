@@ -173,10 +173,10 @@ var (
 		PriorityHeader:  true,
 	})
 
-	// brave153 (C12) is Brave from Chromium 153, which sends no Trust Anchor
-	// IDs.
-	brave153 = newChromiumWire(&ChromiumWire{
-		Name:            "brave-153",
+	// brave152 (C12) is Brave from Chromium 152, which disables Trust Anchor
+	// IDs and so sends none.
+	brave152 = newChromiumWire(&ChromiumWire{
+		Name:            "brave-152",
 		Hello:           ChromiumHelloMLKEM,
 		Shuffle:         true,
 		NewALPS:         true,
@@ -303,9 +303,9 @@ var chromeAndroidSpans = []span{
 // braveOverrideSpans replaces the Chrome wire for Brave by Chromium major.
 var braveOverrideSpans = []span{
 	{
-		first: 153,
+		first: 152,
 		last:  156,
-		wire:  brave153,
+		wire:  brave152,
 	},
 }
 

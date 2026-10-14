@@ -3,31 +3,10 @@ package http
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"net"
 	"testing"
 
 	utls "github.com/refraction-networking/utls"
 )
-
-// TestForceUTLSHTTP1 verifies that forceUTLSHTTP1 rewrites a browser preset's
-// ClientHello so its ALPN offers only http/1.1, without performing a handshake.
-func TestForceUTLSHTTP1(t *testing.T) {
-	c, s := net.Pipe()
-	t.Cleanup(func() {
-		_ = c.Close()
-		_ = s.Close()
-	})
-
-	uconn := utls.UClient(c, &utls.Config{ServerName: "example.com"}, utls.HelloChrome_Auto)
-	if err := forceUTLSHTTP1(uconn); err != nil {
-		t.Fatalf("forceUTLSHTTP1: %v", err)
-	}
-
-	got := uconn.HandshakeState.Hello.AlpnProtocols
-	if len(got) != 1 || got[0] != "http/1.1" {
-		t.Errorf("ALPN = %v, want [http/1.1]", got)
-	}
-}
 
 // TestUTLSConfigFromTLS_Parity verifies that the crypto/tls verification
 // callbacks, client certificates, and KeyLogWriter are translated into the
