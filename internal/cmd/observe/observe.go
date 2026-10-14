@@ -11,10 +11,10 @@ import (
 	"runtime"
 	"time"
 
-	http "github.com/aarock1234/fphttp"
-	"github.com/aarock1234/fphttp/browser"
-	"github.com/aarock1234/fphttp/cookiejar"
-	"github.com/aarock1234/fphttp/httptrace"
+	http "github.com/aarock1234/fphttp/v2"
+	"github.com/aarock1234/fphttp/v2/browser"
+	"github.com/aarock1234/fphttp/v2/cookiejar"
+	"github.com/aarock1234/fphttp/v2/httptrace"
 )
 
 const maxResponseBytes = 10 << 20

@@ -1,4 +1,4 @@
-module github.com/aarock1234/fphttp
+module github.com/aarock1234/fphttp/v2
 
 go 1.27.2
 

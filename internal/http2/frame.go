@@ -19,7 +19,7 @@ import (
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2/hpack"
 
-	"github.com/aarock1234/fphttp/internal/httpsfv"
+	"github.com/aarock1234/fphttp/v2/internal/httpsfv"
 )
 
 const frameHeaderLen = 9

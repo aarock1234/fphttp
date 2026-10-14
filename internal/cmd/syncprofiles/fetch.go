@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	httpfp "github.com/aarock1234/fphttp"
-	"github.com/aarock1234/fphttp/browser"
+	httpfp "github.com/aarock1234/fphttp/v2"
+	"github.com/aarock1234/fphttp/v2/browser"
 )
 
 const responseLimit = 32 << 20

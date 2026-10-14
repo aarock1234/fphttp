@@ -11,7 +11,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
-	"github.com/aarock1234/fphttp/httptrace"
+	"github.com/aarock1234/fphttp/v2/httptrace"
 )
 
 // utlsConn wraps a *utls.UConn to satisfy the http2connectionStater

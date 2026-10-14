@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 // IdentityHeaders returns independently owned basic identity headers for an

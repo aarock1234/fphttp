@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"sync"
 
-	"github.com/aarock1234/fphttp/httptrace"
+	"github.com/aarock1234/fphttp/v2/httptrace"
 )
 
 // A ClientConn is a client connection to an HTTP server.

@@ -13,8 +13,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/aarock1234/fphttp/internal/fingerprint"
-	"github.com/aarock1234/fphttp/internal/http2"
+	"github.com/aarock1234/fphttp/v2/internal/fingerprint"
+	"github.com/aarock1234/fphttp/v2/internal/http2"
 )
 
 // This file connects the net/http Transport to the HTTP/2 client

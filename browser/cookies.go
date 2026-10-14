@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 func (c *Client) applyCookies(req *http.Request) {

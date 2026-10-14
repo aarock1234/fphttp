@@ -28,7 +28,7 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/aarock1234/fphttp/internal/ascii"
+	"github.com/aarock1234/fphttp/v2/internal/ascii"
 )
 
 // A Client is an HTTP client. Its zero value ([DefaultClient]) is a

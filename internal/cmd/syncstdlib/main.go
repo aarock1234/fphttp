@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const modulePath = "github.com/aarock1234/fphttp"
+const modulePath = "github.com/aarock1234/fphttp/v2"
 
 type options struct {
 	revision   string

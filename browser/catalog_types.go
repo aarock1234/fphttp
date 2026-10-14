@@ -2,7 +2,7 @@
 package browser
 
 import (
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 // Evidence describes the provenance of one layer of a profile.

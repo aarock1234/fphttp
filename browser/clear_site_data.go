@@ -3,7 +3,7 @@ package browser
 import (
 	"strings"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 // Clear-Site-Data is considered only in an explicit credentialed browser

@@ -7,7 +7,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 func (c *Client) pool(profile *Profile) (*http.Transport, error) {

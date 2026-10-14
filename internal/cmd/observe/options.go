@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	http "github.com/aarock1234/fphttp"
-	"github.com/aarock1234/fphttp/browser"
+	http "github.com/aarock1234/fphttp/v2"
+	"github.com/aarock1234/fphttp/v2/browser"
 )
 
 type observationProtocol string

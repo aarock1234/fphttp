@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aarock1234/fphttp"
-	"github.com/aarock1234/fphttp/cgi"
+	"github.com/aarock1234/fphttp/v2"
+	"github.com/aarock1234/fphttp/v2/cgi"
 )
 
 // request holds the state for an in-progress request. As soon as it's complete,

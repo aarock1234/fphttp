@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aarock1234/fphttp"
+	"github.com/aarock1234/fphttp/v2"
 )
 
 // Request returns the HTTP request as represented in the current

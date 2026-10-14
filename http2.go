@@ -7,7 +7,7 @@
 package http
 
 import (
-	"github.com/aarock1234/fphttp/internal/http2"
+	"github.com/aarock1234/fphttp/v2/internal/http2"
 )
 
 // net/http supports HTTP/2 by default, but this support is removed when

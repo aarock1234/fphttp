@@ -8,7 +8,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
-	"github.com/aarock1234/fphttp/internal/fingerprint"
+	"github.com/aarock1234/fphttp/v2/internal/fingerprint"
 )
 
 // H2SettingID identifies an HTTP/2 SETTINGS parameter.

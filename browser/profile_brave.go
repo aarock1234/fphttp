@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 //go:embed data/brave.json

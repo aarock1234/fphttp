@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"slices"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 func configureSettingsGREASE(fingerprint *http.Fingerprint) {

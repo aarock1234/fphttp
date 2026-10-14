@@ -5,7 +5,7 @@
 package http
 
 import (
-	"github.com/aarock1234/fphttp/internal"
+	"github.com/aarock1234/fphttp/v2/internal"
 )
 
 // DetectContentType implements the algorithm described

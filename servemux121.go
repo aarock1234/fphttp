@@ -20,7 +20,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/aarock1234/fphttp/internal/godebug"
+	"github.com/aarock1234/fphttp/v2/internal/godebug"
 )
 
 var httpmuxgo121 = godebug.New("httpmuxgo121")

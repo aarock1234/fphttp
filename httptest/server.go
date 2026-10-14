@@ -12,7 +12,7 @@ import (
 	"crypto/x509"
 	"flag"
 	"fmt"
-	"github.com/aarock1234/fphttp"
+	"github.com/aarock1234/fphttp/v2"
 	"log"
 	"net"
 	"os"
@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aarock1234/fphttp/internal/testcert"
+	"github.com/aarock1234/fphttp/v2/internal/testcert"
 )
 
 // A Server is an HTTP server listening on a system-chosen port on the

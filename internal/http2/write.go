@@ -13,7 +13,7 @@ import (
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2/hpack"
 
-	"github.com/aarock1234/fphttp/internal/httpcommon"
+	"github.com/aarock1234/fphttp/v2/internal/httpcommon"
 )
 
 // writeFramer is implemented by any type that is used to write frames.

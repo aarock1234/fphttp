@@ -15,8 +15,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/aarock1234/fphttp/internal"
-	"github.com/aarock1234/fphttp/internal/fingerprint"
+	"github.com/aarock1234/fphttp/v2/internal"
+	"github.com/aarock1234/fphttp/v2/internal/fingerprint"
 )
 
 // Since net/http imports the http2 package, http2 cannot use any net/http types.

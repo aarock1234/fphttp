@@ -12,10 +12,10 @@
 //
 // To use pprof, link this package into your program:
 //
-//	import _ "github.com/aarock1234/fphttp/pprof"
+//	import _ "github.com/aarock1234/fphttp/v2/pprof"
 //
 // If your application is not already running an http server, you
-// need to start one. Add "github.com/aarock1234/fphttp" and "log" to your imports and
+// need to start one. Add "github.com/aarock1234/fphttp/v2" and "log" to your imports and
 // the following code to your main function:
 //
 //	go func() {
@@ -88,9 +88,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aarock1234/fphttp"
-	"github.com/aarock1234/fphttp/internal/godebug"
-	"github.com/aarock1234/fphttp/internal/profile"
+	"github.com/aarock1234/fphttp/v2"
+	"github.com/aarock1234/fphttp/v2/internal/godebug"
+	"github.com/aarock1234/fphttp/v2/internal/profile"
 )
 
 func init() {

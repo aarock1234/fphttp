@@ -17,8 +17,8 @@ import (
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2/hpack"
 
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/fingerprint"
+	"github.com/aarock1234/fphttp/v2/httptrace"
+	"github.com/aarock1234/fphttp/v2/internal/fingerprint"
 )
 
 var (

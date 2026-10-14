@@ -23,10 +23,10 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/aarock1234/fphttp"
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/ascii"
-	"github.com/aarock1234/fphttp/internal/godebug"
+	"github.com/aarock1234/fphttp/v2"
+	"github.com/aarock1234/fphttp/v2/httptrace"
+	"github.com/aarock1234/fphttp/v2/internal/ascii"
+	"github.com/aarock1234/fphttp/v2/internal/godebug"
 )
 
 // A ProxyRequest contains a request to be rewritten by a [ReverseProxy].

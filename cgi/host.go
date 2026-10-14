@@ -31,7 +31,7 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/aarock1234/fphttp"
+	"github.com/aarock1234/fphttp/v2"
 )
 
 var trailingPort = regexp.MustCompile(`:([0-9]+)$`)

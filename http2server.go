@@ -14,7 +14,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/aarock1234/fphttp/internal/http2"
+	"github.com/aarock1234/fphttp/v2/internal/http2"
 )
 
 // This file connects the net/http Server to the HTTP/2 server

@@ -16,11 +16,11 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"github.com/aarock1234/fphttp"
+	"github.com/aarock1234/fphttp/v2"
 	"runtime"
 
-	"github.com/aarock1234/fphttp/httptest"
-	"github.com/aarock1234/fphttp/pprof"
+	"github.com/aarock1234/fphttp/v2/httptest"
+	"github.com/aarock1234/fphttp/v2/pprof"
 )
 
 func main() {

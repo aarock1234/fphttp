@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 func appendProfileDefinitions(entries []Descriptor) []Descriptor {

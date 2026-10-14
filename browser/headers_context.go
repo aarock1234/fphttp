@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/net/publicsuffix"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 func contextualHeaders(req *http.Request, p *Profile, metadata *RequestContext) (http.Header, error) {

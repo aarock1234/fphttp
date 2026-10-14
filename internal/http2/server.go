@@ -40,10 +40,10 @@ import (
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2/hpack"
 
-	"github.com/aarock1234/fphttp/internal"
-	"github.com/aarock1234/fphttp/internal/ascii"
-	"github.com/aarock1234/fphttp/internal/godebug"
-	"github.com/aarock1234/fphttp/internal/httpcommon"
+	"github.com/aarock1234/fphttp/v2/internal"
+	"github.com/aarock1234/fphttp/v2/internal/ascii"
+	"github.com/aarock1234/fphttp/v2/internal/godebug"
+	"github.com/aarock1234/fphttp/v2/internal/httpcommon"
 )
 
 const (

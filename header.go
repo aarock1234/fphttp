@@ -14,8 +14,8 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/ascii"
+	"github.com/aarock1234/fphttp/v2/httptrace"
+	"github.com/aarock1234/fphttp/v2/internal/ascii"
 )
 
 // A Header represents the key-value pairs in an HTTP header.

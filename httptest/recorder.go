@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/aarock1234/fphttp"
+	"github.com/aarock1234/fphttp/v2"
 )
 
 // ResponseRecorder is an implementation of [http.ResponseWriter] that

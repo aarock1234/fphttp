@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/aarock1234/fphttp/internal/ascii"
+	"github.com/aarock1234/fphttp/v2/internal/ascii"
 )
 
 // These parameter values are specified in section 5.

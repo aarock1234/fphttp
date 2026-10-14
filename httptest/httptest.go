@@ -13,7 +13,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/aarock1234/fphttp"
+	"github.com/aarock1234/fphttp/v2"
 )
 
 // NewRequest wraps NewRequestWithContext using context.Background.

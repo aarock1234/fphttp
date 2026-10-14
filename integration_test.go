@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 type peetResponse struct {

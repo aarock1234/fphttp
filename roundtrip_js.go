@@ -15,7 +15,7 @@ import (
 	"strings"
 	"syscall/js"
 
-	"github.com/aarock1234/fphttp/internal/ascii"
+	"github.com/aarock1234/fphttp/v2/internal/ascii"
 )
 
 var uint8Array = js.Global().Get("Uint8Array")

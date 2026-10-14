@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 func prepareHeaders(req *http.Request, p *Profile, metadata *RequestContext, acceptedHints []string, disabled bool) (*http.Request, error) {

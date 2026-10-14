@@ -32,8 +32,8 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/aarock1234/fphttp/internal"
-	"github.com/aarock1234/fphttp/internal/godebug"
+	"github.com/aarock1234/fphttp/v2/internal"
+	"github.com/aarock1234/fphttp/v2/internal/godebug"
 )
 
 // Errors used by the HTTP server.

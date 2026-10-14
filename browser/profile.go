@@ -3,7 +3,7 @@ package browser
 import (
 	"slices"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 // Profile is an immutable selection. Returned metadata and fingerprint slices

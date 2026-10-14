@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"strings"
 
-	http "github.com/aarock1234/fphttp"
+	http "github.com/aarock1234/fphttp/v2"
 )
 
 // Redirects carry forward the previously reduced referrer and adopt the last

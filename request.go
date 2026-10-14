@@ -29,9 +29,9 @@ import (
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/idna"
 
-	"github.com/aarock1234/fphttp/httptrace"
-	"github.com/aarock1234/fphttp/internal/ascii"
-	"github.com/aarock1234/fphttp/internal/headerparse"
+	"github.com/aarock1234/fphttp/v2/httptrace"
+	"github.com/aarock1234/fphttp/v2/internal/ascii"
+	"github.com/aarock1234/fphttp/v2/internal/headerparse"
 )
 
 const (

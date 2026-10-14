@@ -15,7 +15,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/aarock1234/fphttp/browser"
+	"github.com/aarock1234/fphttp/v2/browser"
 )
 
 type importer struct {
