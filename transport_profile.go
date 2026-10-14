@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	utls "github.com/refraction-networking/utls"
+
+	"github.com/aarock1234/fphttp/v2/internal/catalog"
 )
 
 // errProfileExternalHTTP2 reports a Transport whose HTTP/2 support comes from
@@ -18,8 +20,8 @@ var errProfileExternalHTTP2 = errors.New("fphttp: Profile cannot be combined wit
 type transportProfile struct {
 	// snapshot is the Transport's private deep copy of Profile, or nil when
 	// Profile is nil. Every reader uses it instead of Profile, so changes to
-	// Profile after first use have no effect. Its H1HeaderCase has canonical
-	// keys.
+	// Profile after first use have no effect. Its Header and H1HeaderCase
+	// have canonical keys.
 	snapshot *Profile
 
 	// err is the configuration error that every RoundTrip and NewClientConn
@@ -30,12 +32,30 @@ type transportProfile struct {
 	// Transport only. It is nil when the profile has no ClientHello or
 	// session tickets are disabled.
 	sessionCache utls.ClientSessionCache
+
+	// hints remembers the client hints each origin asked for with
+	// Accept-CH, for this Transport only. The pointer never changes; the
+	// store synchronizes its own contents.
+	hints *clientHintStore
+
+	// hintValues holds the client hint values of the profile's release,
+	// computed once, or nil when the release sends no client hints or the
+	// profile has no identity. It is never modified.
+	hintValues *catalog.ClientHints
+
+	// catalogPriorities reports that the catalog's per-destination HTTP/2
+	// priorities describe the profile (see usesCatalogPriorities).
+	catalogPriorities bool
 }
 
 // snapshotProfile copies Profile, validates the copy together with the
-// Transport settings it depends on, and creates the TLS session cache. It
-// runs at the start of onceSetNextProtoDefaults, before any other
-// initialization reads the profile.
+// Transport settings it depends on, and creates the TLS session cache and
+// the client hint store. It runs at the start of onceSetNextProtoDefaults,
+// before any other initialization reads the profile.
+//
+// The copy's Header gets canonical keys, with a field spelled several ways
+// merged as in a request's Header (see normalizeHeader), so requests find
+// its fields by canonical key. A nil Header stays nil.
 func (t *Transport) snapshotProfile() {
 	if t.Profile == nil {
 		return
@@ -44,12 +64,27 @@ func (t *Transport) snapshotProfile() {
 	snapshot := t.Profile.Clone()
 	err := t.validateProfile(snapshot)
 	snapshot.H1HeaderCase = canonicalHeaderCase(snapshot.H1HeaderCase)
+	snapshot.Header, _ = normalizeHeader(snapshot.Header)
 
 	t.profileState = transportProfile{
-		snapshot:     snapshot,
-		err:          err,
-		sessionCache: newProfileSessionCache(snapshot, t.TLSClientConfig),
+		snapshot:          snapshot,
+		err:               err,
+		sessionCache:      newProfileSessionCache(snapshot, t.TLSClientConfig),
+		hints:             new(clientHintStore),
+		hintValues:        snapshot.clientHintValues(),
+		catalogPriorities: usesCatalogPriorities(snapshot),
 	}
+}
+
+// clientHintValues returns the client hint values of p's release, or nil
+// when the release sends no client hints or p has no identity. The caller
+// owns the result.
+func (p *Profile) clientHintValues() *catalog.ClientHints {
+	if !p.hasIdentity() {
+		return nil
+	}
+
+	return p.entry.ClientHints()
 }
 
 // validateProfile checks a profile snapshot and the Transport settings that

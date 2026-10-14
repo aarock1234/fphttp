@@ -123,6 +123,12 @@ type Response struct {
 	// The pointer is shared between responses and should not be
 	// modified.
 	TLS *tls.ConnectionState
+
+	// fphttp: restartForHints is set by a Transport with a Profile when the
+	// response's Critical-CH names client hints that the request lacked and
+	// would now carry. A Client then restarts the redirect chain from its
+	// first request (critical_ch.go, client_restart.go).
+	restartForHints bool
 }
 
 // Cookies parses and returns the cookies set in the Set-Cookie headers.

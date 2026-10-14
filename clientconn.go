@@ -22,6 +22,12 @@ import (
 type ClientConn struct {
 	cc genericClientConn
 
+	// fphttp: transport is the Transport that created the connection, whose
+	// Profile shapes each request and response (clientconn_profile.go). It
+	// is nil for a connection that x/net/http2 handed in, which a Transport
+	// with a Profile never accepts.
+	transport *Transport
+
 	stateHookMu      sync.Mutex
 	userStateHook    func(*ClientConn)
 	stateHookRunning bool
@@ -178,7 +184,7 @@ func (t *Transport) NewClientConn(ctx context.Context, scheme, address string) (
 	// HTTP/1 and HTTP/2.
 	//
 	// Since there's no need to change the persistConn's hook, we set it at creation time.
-	cc := &ClientConn{}
+	cc := &ClientConn{transport: t} // fphttp: t's Profile applies to the connection's requests
 	const isClientConn = true
 	pconn, err := t.dialConn(ctx, cm, isClientConn, cc.maybeRunStateHook)
 	if err != nil {
@@ -255,6 +261,13 @@ func validateClientConnRequest(req *Request) error {
 // If the connection is at its concurrency limit,
 // RoundTrip waits for the connection to become available
 // before sending the request.
+//
+// fphttp: with a Transport Profile, RoundTrip prepares the request and
+// finishes the response as [Transport.RoundTrip] does: the profile's
+// fields are layered and generated, Go's default User-Agent is never
+// sent, the Transport's client hint store learns from the response, and
+// the body is decoded. Each request is the first hop of its own redirect
+// chain.
 func (cc *ClientConn) RoundTrip(req *Request) (*Response, error) {
 	defer cc.maybeRunStateHook()
 	if req.URL == nil && req.Method == ":ping" {
@@ -278,7 +291,9 @@ func (cc *ClientConn) RoundTrip(req *Request) (*Response, error) {
 		cc.Release()
 		return nil, err
 	}
-	return cc.cc.RoundTrip(req)
+	// fphttp: the Transport's Profile shapes req and its response
+	// (clientconn_profile.go).
+	return cc.roundTripProfile(req)
 }
 
 // Available reports the number of requests that may be sent

@@ -207,6 +207,10 @@ type Transport struct {
 	// decoded in the Response.Body. However, if the user
 	// explicitly requested gzip it is not automatically
 	// uncompressed.
+	//
+	// fphttp: a Transport with a Profile never requests gzip on its
+	// own. DisableCompression then only stops it from decoding the
+	// responses to the Accept-Encoding the Profile supplies.
 	DisableCompression bool
 
 	// MaxIdleConns controls the maximum number of idle (keep-alive)
@@ -655,7 +659,17 @@ func (t *Transport) roundTrip(req *Request) (_ *Response, err error) {
 	}
 	scheme := req.URL.Scheme
 	isHTTP := scheme == "http" || scheme == "https"
+	origReq := req // fphttp: taken before the Profile hook below replaces req
 	if isHTTP {
+		// fphttp: with a Profile, the rest of roundTrip sends a private
+		// clone of req that carries the profile's fields (request_prepare.go).
+		prepared, err := t.prepareRequest(req)
+		if err != nil {
+			req.closeBody()
+			return nil, err
+		}
+		req = prepared
+
 		// Validate the outgoing headers.
 		if err := validateHeaders(req.Header); err != "" {
 			req.closeBody()
@@ -669,11 +683,13 @@ func (t *Transport) roundTrip(req *Request) (_ *Response, err error) {
 		}
 	}
 
-	origReq := req
 	req = setupRewindBody(req)
 
 	if altRT := t.alternateRoundTripper(req); altRT != nil {
 		if resp, err := altRT.RoundTrip(req); err != ErrSkipAltProtocol {
+			// fphttp: caller's request, client hints, and decoding
+			// (response_finish.go).
+			t.finishResponse(resp, req, origReq)
 			return resp, err
 		}
 		var err error
@@ -759,6 +775,8 @@ func (t *Transport) roundTrip(req *Request) (_ *Response, err error) {
 				cancel(errRequestDone)
 			}
 			resp.Request = origReq
+			// fphttp: client hints and decoding (response_finish.go).
+			t.finishResponse(resp, req, origReq)
 			return resp, nil
 		}
 
@@ -2889,7 +2907,8 @@ func (pc *persistConn) writeLoop() {
 		select {
 		case wr := <-pc.writech:
 			startBytesWritten := pc.nwrite
-			request, headerOrder := pc.t.http1Layout(wr.req.Request) // fphttp: profile order and casing
+			// fphttp: profile order, casing, and Proxy-Connection.
+			request, headerOrder := pc.t.http1Layout(wr.req.Request, pc.isProxy)
 			err := request.write(pc.bw, pc.isProxy, wr.req.extra, pc.waitForContinue(wr.continueCh), headerOrder)
 			if bre, ok := err.(requestBodyReadError); ok {
 				err = bre.error
@@ -3079,6 +3098,7 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 	// requested it.
 	requestedGzip := false
 	if !pc.t.DisableCompression &&
+		pc.t.profileState.snapshot == nil && // fphttp: a Profile never asks for Go's automatic gzip
 		req.Header.Get("Accept-Encoding") == "" &&
 		req.Header.Get("Range") == "" &&
 		req.Method != "HEAD" {

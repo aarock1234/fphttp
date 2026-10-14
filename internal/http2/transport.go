@@ -1563,7 +1563,8 @@ func (cc *ClientConn) encodeRequestHeaders(req *ClientRequest, addGzipHeader boo
 		headerOrder = fingerprint.ResolveOrder(headerOrder, fp.HeaderOrder)
 		pseudoHeaderOrder = fingerprint.ResolveOrder(pseudoHeaderOrder, fp.PseudoHeaderOrder)
 	}
-	headers, headerOrder := requestHeadersWithPriority(req, headerOrder)
+	// fphttp: Priority and HTTP/2-only fields.
+	headers, headerOrder := requestHeadersToEncode(req, headerOrder)
 
 	return httpcommon.EncodeHeaders(req.Context, httpcommon.EncodeHeadersParam{
 		Request: httpcommon.Request{

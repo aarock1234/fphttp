@@ -132,6 +132,7 @@ func http2RoundTrip(req *Request, rt func(*http2.ClientRequest) (*http2.ClientRe
 		PseudoHeaderOrder: req.PseudoHeaderOrder,
 		H2Priority:        req.H2Priority,
 		H2PriorityHeader:  req.H2PriorityHeader,
+		LastFields:        req.profileHop.http2Fields, // fphttp: a Profile's HTTP/2-only fields
 	})
 	if err != nil {
 		return nil, err
@@ -292,6 +293,9 @@ func (t transportConfig) MaxHeaderListSize() int64 {
 }
 
 func (t transportConfig) DisableCompression() bool {
+	if t.t.profileState.snapshot != nil {
+		return true // fphttp: a Profile never asks for Go's automatic gzip
+	}
 	if t.t.h2Config != nil && t.t.h2Config.DisableCompression() {
 		return true
 	}

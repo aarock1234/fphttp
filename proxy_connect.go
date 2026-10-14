@@ -51,20 +51,58 @@ func (t *Transport) applyProfileToConnect(connectReq *Request) {
 	canonicalizeFieldFold(header, "User-Agent")
 	canonicalizeFieldFold(header, "Proxy-Connection")
 
-	if !header.has("User-Agent") {
-		header.Set("User-Agent", firstFieldFold(snapshot.Header, "User-Agent"))
-	}
+	addTunnelFields(header, snapshot)
 
 	if snapshot.family() == catalog.FamilyChromium {
-		if snapshot.Header != nil && !header.has("Proxy-Connection") {
-			header.Set("Proxy-Connection", "keep-alive")
-		}
-
 		connectReq.HeaderOrder = slices.Clone(chromiumConnectOrder)
 	}
 
 	connectReq.Header = header
 	connectReq.H1HeaderCase = headerCase
+}
+
+// prepareTunnelRequest prepares a CONNECT request that the caller sends
+// through Transport.RoundTrip or a ClientConn, as the profile's browser
+// opens a tunnel (see applyProfileToConnect). It adds only the tunnel
+// fields (see addTunnelFields), and a Chromium release writes them in
+// Chromium's order unless the request has a HeaderOrder of its own.
+//
+// Profile.Header and the generated browser fields belong to the requests
+// sent through the tunnel, never to the CONNECT request itself. prepared is
+// the Transport's private clone, whose Header has canonical keys.
+func prepareTunnelRequest(prepared *Request, snapshot *Profile) {
+	addTunnelFields(prepared.Header, snapshot)
+
+	if prepared.HeaderOrder != nil {
+		return
+	}
+
+	if snapshot.family() == catalog.FamilyChromium {
+		prepared.HeaderOrder = chromiumConnectOrder
+	}
+}
+
+// addTunnelFields adds to header, whose User-Agent and Proxy-Connection
+// keys are canonical, the fields of a browser's CONNECT request that header
+// does not set:
+//
+//   - User-Agent from the profile's Header, or an empty one, which sends no
+//     User-Agent, when the profile's Header has none, so a Transport with a
+//     profile never sends Go's default.
+//   - For a Chromium release, Proxy-Connection: keep-alive, unless the
+//     profile's Header is nil, which disables every generated field.
+func addTunnelFields(header Header, snapshot *Profile) {
+	if !header.has("User-Agent") {
+		header.Set("User-Agent", firstFieldFold(snapshot.Header, "User-Agent"))
+	}
+
+	if snapshot.family() != catalog.FamilyChromium || snapshot.Header == nil {
+		return
+	}
+
+	if !header.has("Proxy-Connection") {
+		header.Set("Proxy-Connection", "keep-alive")
+	}
 }
 
 // connectHeaderCase returns the HTTP/1.1 casing of a CONNECT request: the

@@ -66,6 +66,12 @@ type ClientRequest struct {
 	// H2PriorityHeader supplies a Priority field unless Header already has one.
 	H2PriorityHeader string
 
+	// LastFields supplies fields encoded after every other regular field,
+	// in order, each unless Header already has it. They travel outside
+	// Header because HTTP/1.1 must never send them (fphttp: a profile's
+	// HTTP/2-only fields, such as Firefox's te: trailers).
+	LastFields []fingerprint.Field
+
 	// Include the per-request stream in the ClientRequest to avoid an allocation.
 	stream clientStream
 }
@@ -92,6 +98,7 @@ func (req *ClientRequest) Clone() *ClientRequest {
 		PseudoHeaderOrder: req.PseudoHeaderOrder,
 		H2Priority:        req.H2Priority,
 		H2PriorityHeader:  req.H2PriorityHeader,
+		LastFields:        req.LastFields,
 	}
 }
 

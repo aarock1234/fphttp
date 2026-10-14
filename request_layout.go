@@ -6,21 +6,43 @@ import (
 	"github.com/aarock1234/fphttp/v2/internal/fingerprint"
 )
 
+// selectHeaderOrder gives a prepared request whose HeaderOrder is nil the
+// profile's order for its Destination: SubresourceHeaderOrder for requests
+// that are not navigations, when the profile has one. Navigations, and
+// subresources of a profile without SubresourceHeaderOrder, keep a nil
+// HeaderOrder, which the HTTP/1.1 and HTTP/2 writers resolve to the
+// profile's HeaderOrder. The request shares the snapshot's slice, which is
+// never modified.
+func selectHeaderOrder(request *Request, snapshot *Profile) {
+	if request.HeaderOrder != nil || request.Destination.navigation() {
+		return
+	}
+
+	if snapshot.SubresourceHeaderOrder == nil {
+		return
+	}
+
+	request.HeaderOrder = snapshot.SubresourceHeaderOrder
+}
+
 // http1Layout returns the request to write on an HTTP/1.1 connection and
 // the field order that Request.write uses when the request has no
-// HeaderOrder of its own.
+// HeaderOrder of its own. toProxy reports that the connection forwards
+// plain-http requests to a proxy.
 //
 // Without a profile both are the caller's, as upstream. With a profile the
 // fallback order is the snapshot's HeaderOrder, and the casing map is the
 // snapshot's H1HeaderCase overlaid with the request's, the request winning
-// per field. In that case the returned request is a shallow copy carrying
-// the merged map; the caller's request is never modified.
-func (t *Transport) http1Layout(request *Request) (*Request, []string) {
+// per field. A request to a proxy may also carry Proxy-Connection instead
+// of Connection (see withProxyConnection). In those cases the returned
+// request is a shallow copy; the request passed in is never modified.
+func (t *Transport) http1Layout(request *Request, toProxy bool) (*Request, []string) {
 	snapshot := t.profileState.snapshot
 	if snapshot == nil {
 		return request, nil
 	}
 
+	request = t.withProxyConnection(request, toProxy)
 	if len(snapshot.H1HeaderCase) == 0 {
 		return request, snapshot.HeaderOrder
 	}

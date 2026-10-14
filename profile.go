@@ -21,6 +21,15 @@ import (
 // Header settings but generates no browser fields, and String returns
 // "custom profile".
 //
+// A Transport also handles responses as the browser does. When it supplied
+// a request's Accept-Encoding, from Header or by generating it, it decodes
+// the response body (gzip, deflate, br, and zstd, alone or stacked) unless
+// Transport.DisableCompression is set or the response is partial. With a
+// Chromium profile it remembers the client hints each origin asks for with
+// Accept-CH on a top-level page load, and a Client restarts that page load,
+// at most once per origin, when the response's Critical-CH asks for hints
+// the request lacked.
+//
 // A Profile may be read from several goroutines at once, but changing it
 // while another goroutine reads it, including a Transport taking its first
 // copy, is a data race.
@@ -31,6 +40,15 @@ type Profile struct {
 	// unless Header or the request already contains them. A present but empty
 	// value suppresses a field. A nil Header disables every generated field
 	// and sends only the caller's headers.
+	//
+	// Credential fields from Header (Authorization, Proxy-Authorization,
+	// Cookie, Cookie2, WWW-Authenticate, and Proxy-Authenticate) are sent
+	// only while a redirect chain stays on the first request's host or its
+	// subdomains.
+	//
+	// A CONNECT request, which opens a tunnel, carries only Header's
+	// User-Agent and, for a Chromium release with a non-nil Header,
+	// Proxy-Connection: keep-alive, as the browser's own tunnel request does.
 	Header Header
 
 	// HeaderOrder orders fields for top-level page loads and iframes. Names

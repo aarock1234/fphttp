@@ -35,6 +35,22 @@ func firstFieldFold(h Header, name string) string {
 	return values[0]
 }
 
+// fieldSuppressedFold reports whether h holds the field name, under any
+// spelling, with a present but empty value (see emptyFieldValues). With a
+// Profile such a value suppresses the field, and a Client applies no Jar
+// cookies over an empty Cookie field.
+func fieldSuppressedFold(h Header, name string) bool {
+	values, present := fieldValuesFold(h, name)
+
+	return present && emptyFieldValues(values)
+}
+
+// emptyFieldValues reports whether values is a present but empty field
+// value: a nil or empty slice, or a single empty string.
+func emptyFieldValues(values []string) bool {
+	return len(values) == 0 || len(values) == 1 && values[0] == ""
+}
+
 // canonicalizeFieldFold moves the values of every key of h that spells name
 // with different case to name's canonical key, after any values already
 // there. Header methods and the HTTP/1.1 writers find a field by its

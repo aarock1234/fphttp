@@ -288,6 +288,37 @@ type Request struct {
 	// Few HTTP clients, servers, or proxies support HTTP trailers.
 	Trailer Header
 
+	// Destination is the kind of resource requested. The zero value is a
+	// top-level page load. It selects Sec-Fetch-Dest, Sec-Fetch-Mode, Accept,
+	// priority, and whether a Client applies cookies.
+	//
+	// A Client applies and stores its Jar's cookies for every navigation and
+	// for most subresources. For fetch(), font, manifest, and worker
+	// requests it does so only when Initiator is nil or has the same origin
+	// as the request URL, and it never does for a Destination that is not
+	// one of the Destination constants. A request that is not a navigation
+	// can also decline the Jar's cookies with a present but empty Cookie
+	// field, such as Header["Cookie"] = []string{""}, for every redirect hop
+	// the Client follows, including hops to another host. A navigation (the
+	// zero value, DestinationDocument, DestinationIframe, or
+	// DestinationFrame) always gets them, as without Destination.
+	//
+	// A Transport with a Profile fails a request whose Destination is not
+	// one of the Destination constants. Without a Profile, the Transport
+	// ignores Destination.
+	//
+	// The Client copies Destination and Initiator to every redirect hop. This
+	// field is ignored by the HTTP server.
+	Destination Destination
+
+	// Initiator is the URL of the page that started the request. A nil
+	// Initiator means the user started it, as when typing a URL.
+	//
+	// A Transport with a Profile derives Sec-Fetch-Site, Origin, and Referer
+	// from it, so it should be the page's full URL rather than only its
+	// origin. This field is ignored by the HTTP server.
+	Initiator *url.URL
+
 	// HeaderOrder specifies the order in which HTTP/1.1 headers are
 	// written on the wire. Names match fields ignoring case, so
 	// "content-type" orders the Content-Type field. Headers present in
@@ -296,7 +327,9 @@ type Request struct {
 	// For HTTP/2, this controls the iteration order of regular
 	// (non-pseudo) headers; names are lowercased automatically.
 	//
-	// If nil, the Transport's Profile supplies the order. If both are
+	// If nil, the Transport's Profile supplies the order for the request's
+	// Destination: SubresourceHeaderOrder for requests that are not
+	// navigations, when set, and HeaderOrder otherwise. If both are
 	// nil, Go's default header writing is used. An explicitly empty
 	// slice selects Go's order without the Profile's.
 	//
@@ -321,8 +354,10 @@ type Request struct {
 	PseudoHeaderOrder []string
 
 	// H2Priority overrides the Profile's HEADERS priority for this request.
-	// Nil uses the Profile; a non-nil value with Enabled false omits legacy
-	// priority. This field is ignored for HTTP/1.1 and by the HTTP server.
+	// Nil uses the Profile's priority for the request's Destination, which
+	// is HTTP2.HeaderPriority for a top-level page load; a non-nil value
+	// with Enabled false omits legacy priority. This field is ignored for
+	// HTTP/1.1 and by the HTTP server.
 	H2Priority *H2Priority
 
 	// H2PriorityHeader supplies a Priority field for HTTP/2 requests only.
@@ -386,6 +421,21 @@ type Request struct {
 	pat         *pattern          // the pattern that matched
 	matches     []string          // values for the matching wildcards in pat
 	otherValues map[string]string // for calls to SetPathValue that don't match a wildcard
+
+	// fphttp: clientReferer reports that the Client set the canonical
+	// Referer key of Header on this redirect hop to the previous hop's URL
+	// (refererForURL) rather than copying the caller's Referer. CheckRedirect
+	// changing or removing that key clears it. A Transport whose Profile
+	// generates fields replaces such a Referer with the one the browser's
+	// referrer policy produces; a Referer under another spelling of the key
+	// is the caller's.
+	clientReferer bool
+
+	// fphttp: profileHop is set on the private clone that a Transport with
+	// a Profile sends for one hop, and records what the Transport generated
+	// for it (see request_prepare.go). It is the zero value on every request
+	// a caller holds.
+	profileHop profileHop
 }
 
 // Context returns the request's context. To change the context, use
@@ -462,6 +512,7 @@ func (r *Request) Clone(ctx context.Context) *Request {
 	if r.H2Priority != nil {
 		r2.H2Priority = new(*r.H2Priority)
 	}
+	r2.Initiator = cloneURL(r.Initiator)
 	r2.Form = cloneURLValues(r.Form)
 	r2.PostForm = cloneURLValues(r.PostForm)
 	r2.MultipartForm = cloneMultipartForm(r.MultipartForm)

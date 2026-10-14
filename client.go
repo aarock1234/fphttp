@@ -87,6 +87,9 @@ type Client struct {
 	// of every inbound Response. The Jar is consulted for every
 	// redirect that the Client follows.
 	//
+	// fphttp: a request's Destination can keep the Jar out of a request
+	// that is not a navigation; see [Request.Destination].
+	//
 	// If Jar is nil, cookies are only sent if they are explicitly
 	// set on the Request.
 	Jar CookieJar
@@ -176,7 +179,7 @@ func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTime
 		cookieURL = cloneURL(cookieURL)
 		cookieURL.Host = req.Host
 	}
-	if c.Jar != nil {
+	if c.Jar != nil && req.sendsJarCookies() { // fphttp: credentials mode and an empty Cookie field
 		for _, cookie := range c.Jar.Cookies(cookieURL) {
 			req.AddCookie(cookie)
 		}
@@ -185,7 +188,7 @@ func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTime
 	if err != nil {
 		return nil, didTimeout, err
 	}
-	if c.Jar != nil {
+	if c.Jar != nil && req.storesJarCookies() { // fphttp: credentials mode
 		if rc := resp.Cookies(); len(rc) > 0 {
 			c.Jar.SetCookies(cookieURL, rc)
 		}
@@ -644,6 +647,9 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 			Err: err,
 		}
 	}
+	// fphttp: Critical-CH restarts; with a Jar, this copies req.Header
+	// before the first send (client_restart.go).
+	restarts := c.newHintRestarts(req)
 	for {
 		// For all but the first request, create the next
 		// request hop and replace req.
@@ -681,6 +687,8 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 				H1HeaderCase:      maps.Clone(ireq.H1HeaderCase),
 				PseudoHeaderOrder: slices.Clone(ireq.PseudoHeaderOrder),
 				H2PriorityHeader:  ireq.H2PriorityHeader,
+				Destination:       ireq.Destination,
+				Initiator:         cloneURL(ireq.Initiator),
 				ctx:               ireq.ctx,
 			}
 			if ireq.H2Priority != nil {
@@ -709,9 +717,12 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 			// Add the Referer header from the most recent
 			// request URL to the new one, if it's not https->http:
 			if ref := refererForURL(reqs[len(reqs)-1].URL, req.URL, req.Header.Get("Referer")); ref != "" {
+				// fphttp: ref is the previous URL, not the caller's.
+				req.clientReferer = req.Header.Get("Referer") == ""
 				req.Header.Set("Referer", ref)
 			}
-			err = c.checkRedirect(req, reqs)
+			// fphttp: a Referer that CheckRedirect changes is the caller's.
+			err = c.checkRedirectHop(req, reqs)
 
 			// Sentinel error to let users select the
 			// previous response, without closing its
@@ -752,6 +763,20 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 				err = &timeoutError{err.Error() + " (Client.Timeout exceeded while awaiting headers)"}
 			}
 			return nil, uerr(err)
+		}
+
+		// fphttp: a Transport with a Profile marks a response whose
+		// Critical-CH wants client hints the request lacked; the chain then
+		// starts over from the first request (client_restart.go).
+		if first := restarts.restart(req, resp); first != nil {
+			req = first
+			reqs = nil
+			resp = nil
+			copyHeaders = c.makeHeadersCopier(req)
+			redirectMethod = ""
+			includeBody = true
+			stripSensitiveHeaders = false
+			continue
 		}
 
 		var shouldRedirect, includeBodyOnHop bool
