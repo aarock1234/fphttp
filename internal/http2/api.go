@@ -63,6 +63,12 @@ type ClientRequest struct {
 	// H2Priority overrides the transport HEADERS priority when non-nil.
 	H2Priority *fingerprint.Priority
 
+	// H2PriorityFromProfile reports that a non-nil H2Priority is the
+	// profile's priority for the request rather than the caller's, so it
+	// follows the profile's stream dependency rules like the default
+	// priority does (fphttp).
+	H2PriorityFromProfile bool
+
 	// H2PriorityHeader supplies a Priority field unless Header already has one.
 	H2PriorityHeader string
 
@@ -99,6 +105,8 @@ func (req *ClientRequest) Clone() *ClientRequest {
 		H2Priority:        req.H2Priority,
 		H2PriorityHeader:  req.H2PriorityHeader,
 		LastFields:        req.LastFields,
+
+		H2PriorityFromProfile: req.H2PriorityFromProfile,
 	}
 }
 

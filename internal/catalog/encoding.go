@@ -41,7 +41,9 @@ const (
 //
 // Chromium and Firefox advertise Brotli and Zstandard to https URLs and to
 // plain-http localhost URLs. Safari advertises them to https URLs only; its
-// localhost behavior was not captured and keeps fphttp v1's.
+// localhost behavior was not captured and keeps fphttp v1's. A WebSocket
+// handshake gets the same network default from Chromium and Firefox
+// (URLRequestHttpJob::AddExtraHeaders, nsHttpHandler) and none from Safari.
 //
 // Chromium sends "identity" instead when a request carries a Range field
 // but no Accept-Encoding of its own. The caller applies that rule, because
@@ -60,7 +62,7 @@ func (e Entry) AcceptEncoding(destination string, target URLKind) string {
 	case FamilyFirefox:
 		return e.firefoxAcceptEncoding(kind, target)
 	case FamilySafari:
-		return e.safariAcceptEncoding(target)
+		return e.safariAcceptEncoding(kind, target)
 	default:
 		return ""
 	}
@@ -93,8 +95,14 @@ func (e Entry) firefoxAcceptEncoding(destination fetchDestination, target URLKin
 // safariAcceptEncoding returns Safari's Accept-Encoding: Zstandard from
 // 26.3, so Safari 27 sends it and Safari 26.0 does not. Plain-http values,
 // localhost included, and media requests were not captured and keep fphttp
-// v1's behavior, which advertises Brotli to https URLs only.
-func (e Entry) safariAcceptEncoding(target URLKind) string {
+// v1's behavior, which advertises Brotli to https URLs only. A WebSocket
+// handshake, which CFNetwork builds, gets none, because its fields were not
+// verified.
+func (e Entry) safariAcceptEncoding(destination fetchDestination, target URLKind) string {
+	if destination == destinationWebSocket {
+		return ""
+	}
+
 	return contentEncodings(target == URLSecure, versionAtLeast(e.Version, safariZstdRelease))
 }
 

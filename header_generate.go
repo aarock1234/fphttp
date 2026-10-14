@@ -101,6 +101,11 @@ func (g *fieldGenerator) trustworthy() bool {
 	return g.target != catalog.URLInsecure
 }
 
+// webSocket reports whether the request is a WebSocket handshake.
+func (g *fieldGenerator) webSocket() bool {
+	return g.request.Destination == DestinationWebSocket
+}
+
 // contentFields adds Accept, Accept-Encoding, and the Range of an audio or
 // video request. A generated Accept-Encoding is recorded, because the
 // response body is then encoded as the profile asked.
@@ -168,8 +173,15 @@ func (g *fieldGenerator) connectionField() {
 }
 
 // keepsConnectionAlive reports whether the release asks to keep this
-// request's HTTP/1.1 connection open. Safari sends no Connection field.
+// request's HTTP/1.1 connection open. Safari sends no Connection field. A
+// WebSocket handshake never gets one: its Connection: Upgrade belongs to
+// the WebSocket library, and keep-alive in its place would break the
+// upgrade.
 func (g *fieldGenerator) keepsConnectionAlive() bool {
+	if g.webSocket() {
+		return false
+	}
+
 	switch g.entry.Family {
 	case catalog.FamilyChromium, catalog.FamilyFirefox:
 		return g.keepAlive && !g.request.Close

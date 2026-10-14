@@ -73,7 +73,15 @@ func (p referrerPolicy) valid() bool {
 // on every hop, even where a Client set the previous URL as Referer on a
 // redirect hop; the Transport has already dropped such a Client Referer (see
 // headerToPrepare).
+//
+// A WebSocket handshake carries no Referer: Chromium's
+// WebSocketStreamRequestImpl and Firefox's WebSocketChannel set no
+// referrer on the request.
 func (g *fieldGenerator) refererField() {
+	if g.webSocket() {
+		return
+	}
+
 	if g.has("Referer") || fieldSuppressedFold(g.chain[0].Header, "Referer") {
 		return
 	}

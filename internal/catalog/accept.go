@@ -142,12 +142,19 @@ func (e Entry) Accept(destination string) string {
 // the content frames of object and embed elements, send the frame value;
 // stylesheets and XSLT share one value; every other subresource and worker
 // sends */*. Report requests were not traced and keep fphttp v1's */*.
+//
+// A WebSocket handshake carries no Accept: the network stack builds it
+// without the renderer's or URLLoader's fetch fields
+// (net/websockets/websocket_stream.cc).
 func (e Entry) chromiumAccept(destination fetchDestination) string {
 	if destination.chromiumNavigation() {
 		return e.chromiumFrameAccept()
 	}
 
 	switch destination {
+	case destinationWebSocket:
+		return ""
+
 	case destinationImage:
 		if e.chromiumMajor() >= chromiumJXLMajor {
 			return chromiumImageAccept155
@@ -186,7 +193,8 @@ func (e Entry) chromiumFrameAccept() string {
 
 // firefoxAccept returns Firefox's Accept. Destinations without a dedicated
 // value in Firefox source, such as manifests, workers, and reports, keep
-// fphttp v1's */*.
+// fphttp v1's */*. A WebSocket handshake verifiably sends */*
+// (ACCEPT_HEADER_ALL in nsHttpHandler::AddStandardRequestHeaders).
 func (e Entry) firefoxAccept(destination fetchDestination) string {
 	switch destination {
 	case destinationDocument, destinationSubframe:
@@ -241,7 +249,8 @@ func (e Entry) firefoxImageAccept() string {
 // safariAccept returns Safari's Accept, the same in Safari 26 and 27.
 // Subframes load as main resources like the top-level document. Audio and
 // video load through AVFoundation, which was not traced, and keep fphttp
-// v1's */*.
+// v1's */*. A WebSocket handshake, which CFNetwork builds, gets no Accept,
+// because its fields were not verified.
 func safariAccept(destination fetchDestination) string {
 	switch destination {
 	case destinationDocument, destinationSubframe:
@@ -250,6 +259,8 @@ func safariAccept(destination fetchDestination) string {
 		return safariImageAccept
 	case destinationStyle:
 		return acceptStylesheet
+	case destinationWebSocket:
+		return ""
 	default:
 		return acceptAny
 	}

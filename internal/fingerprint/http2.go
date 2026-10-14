@@ -123,6 +123,13 @@ type Config struct {
 
 	// H2 configures the connection frames and default request priority.
 	H2 HTTP2
+
+	// ChromiumDependencies makes HEADERS frames that carry the profile's
+	// priority depend on other open streams as Chromium's do, instead of
+	// on H2.HeaderPriority's fixed dependency: on the most recently opened
+	// stream of the closest equal or higher priority, or on stream 0 when
+	// no such stream is open. Priorities compare by weight.
+	ChromiumDependencies bool
 }
 
 // SettingValue returns the first setting with the given ID.

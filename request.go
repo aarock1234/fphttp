@@ -304,6 +304,11 @@ type Request struct {
 	// DestinationFrame, DestinationObject, or DestinationEmbed) always gets
 	// them, as without Destination.
 	//
+	// A zero Destination on a WebSocket handshake, a request carrying
+	// Upgrade: websocket or an HTTP/2 extended CONNECT whose :protocol is
+	// websocket, means DestinationWebSocket, for the Client's cookies and
+	// for a Transport with a Profile.
+	//
 	// A Transport with a Profile fails a request whose Destination is not
 	// one of the Destination constants. Without a Profile, the Transport
 	// ignores Destination.

@@ -11,10 +11,21 @@ import (
 // that are not navigations, when the profile has one. Navigations, and
 // subresources of a profile without SubresourceHeaderOrder, keep a nil
 // HeaderOrder, which the HTTP/1.1 and HTTP/2 writers resolve to the
-// profile's HeaderOrder. The request shares the snapshot's slice, which is
-// never modified.
+// profile's HeaderOrder.
+//
+// A WebSocket handshake takes the release's handshake order when the
+// profile has a release identity whose handshake is verified (see
+// webSocketHeaderOrder), and is otherwise ordered as a subresource. The
+// request shares the snapshot's or the catalog's slice, which is never
+// modified.
 func selectHeaderOrder(request *Request, snapshot *Profile) {
 	if request.HeaderOrder != nil || request.Destination.navigation() {
+		return
+	}
+
+	if order := webSocketHeaderOrder(request, snapshot); order != nil {
+		request.HeaderOrder = order
+
 		return
 	}
 
@@ -23,6 +34,23 @@ func selectHeaderOrder(request *Request, snapshot *Profile) {
 	}
 
 	request.HeaderOrder = snapshot.SubresourceHeaderOrder
+}
+
+// webSocketHeaderOrder returns the release's WebSocket handshake order for
+// a request with DestinationWebSocket (catalog Wire.WebSocketOrder), or nil
+// for any other request, for a profile without a release identity, and for
+// a release whose handshake is not verified, such as Safari's.
+func webSocketHeaderOrder(request *Request, snapshot *Profile) []string {
+	if request.Destination != DestinationWebSocket || !snapshot.hasIdentity() {
+		return nil
+	}
+
+	wire := snapshot.entry.Wire
+	if wire == nil {
+		return nil
+	}
+
+	return wire.WebSocketOrder
 }
 
 // http1Layout returns the request to write on an HTTP/1.1 connection and

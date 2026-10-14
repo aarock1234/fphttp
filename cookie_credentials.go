@@ -7,7 +7,9 @@ package http
 // A navigation, including the zero Destination, always gets them, exactly
 // as upstream, where AddCookie replaces a present but empty Cookie field.
 // Any other request declines them with such a field, for example
-// Header["Cookie"] = []string{""} (see declinesJarCookies).
+// Header["Cookie"] = []string{""} (see declinesJarCookies). The Client
+// reads only the caller's Destination, never a detected one, so a
+// request with a zero Destination always behaves as upstream.
 func (r *Request) sendsJarCookies() bool {
 	if !r.carriesCredentials() {
 		return false
@@ -44,7 +46,8 @@ func (r *Request) storesJarCookies() bool {
 }
 
 // carriesCredentials reports whether the credentials mode that r's
-// Destination implies allows cookies for r's URL: always for include, never
+// Destination (see Request.destination) implies allows cookies for r's URL:
+// always for include, which WebSocket handshakes use, never
 // for omit, and for same-origin only when Initiator is nil, a request the
 // user started, or has the same origin as URL. A Client evaluates it for
 // every redirect hop, so a fetch that is redirected to another origin stops

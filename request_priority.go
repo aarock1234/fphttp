@@ -24,6 +24,19 @@ func (t *Transport) selectHTTP2Priority(request *Request) {
 
 	priority := state.snapshot.entry.Priority(string(request.Destination)).HTTP2
 	request.H2Priority = &priority
+	request.profileHop.catalogH2Priority = true
+}
+
+// usesChromiumDependencies reports whether the HTTP/2 transport chains the
+// HEADERS frames of profile-priority requests the way Chromium does (see
+// fingerprint.Config.ChromiumDependencies). It requires a Chromium release
+// whose priority configuration is still the catalog's, so a profile whose
+// HeaderPriority was changed, for example to a fixed dependency, sends
+// exactly what it was configured with.
+func (t *Transport) usesChromiumDependencies() bool {
+	state := &t.profileState
+
+	return state.catalogPriorities && state.snapshot.family() == catalog.FamilyChromium
 }
 
 // priority adds the extensible Priority field the release sends for the

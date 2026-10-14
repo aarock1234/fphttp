@@ -11,9 +11,13 @@ import "github.com/aarock1234/fphttp/v2/internal/catalog"
 // request may carry it (see highEntropyHintsPermitted), and the release has
 // a value for it; the catalog leaves values empty where the browser sends
 // none or the default is unverified.
+//
+// A WebSocket handshake carries no client hints: Chromium adds them in
+// Blink's fetch context and the browser's navigation code, and neither
+// builds a handshake.
 func (g *fieldGenerator) clientHints() {
 	values := g.hintValues
-	if values == nil || !g.trustworthy() {
+	if values == nil || !g.trustworthy() || g.webSocket() {
 		return
 	}
 

@@ -56,7 +56,7 @@ func (h HTTP2) validateSettings() error {
 
 	for _, setting := range h.Settings {
 		if seen[setting.ID] {
-			problems = append(problems, fmt.Errorf("fphttp: HTTP2 Settings contain %v twice", setting.ID))
+			problems = append(problems, fmt.Errorf("fphttp: Profile.HTTP2.Settings contain %v twice", setting.ID))
 		}
 
 		seen[setting.ID] = true
@@ -64,7 +64,7 @@ func (h HTTP2) validateSettings() error {
 	}
 
 	if !seen[SettingEnablePush] {
-		problems = append(problems, errors.New("fphttp: HTTP2 Settings must include ENABLE_PUSH = 0"))
+		problems = append(problems, errors.New("fphttp: Profile.HTTP2.Settings must include ENABLE_PUSH = 0"))
 	}
 
 	return errors.Join(problems...)
@@ -76,27 +76,27 @@ func validateSetting(setting Setting) error {
 	switch setting.ID {
 	case SettingEnablePush:
 		if setting.Val != 0 {
-			return errors.New("fphttp: ENABLE_PUSH must be 0; server push is unsupported")
+			return errors.New("fphttp: Profile.HTTP2 ENABLE_PUSH must be 0; server push is unsupported")
 		}
 
 	case SettingInitialWindowSize:
 		if setting.Val == 0 || setting.Val > math.MaxInt32 {
-			return errors.New("fphttp: INITIAL_WINDOW_SIZE must be between 1 and 2147483647")
+			return errors.New("fphttp: Profile.HTTP2 INITIAL_WINDOW_SIZE must be between 1 and 2147483647")
 		}
 
 	case SettingMaxFrameSize:
 		if setting.Val < minMaxFrameSize || setting.Val > maxMaxFrameSize {
-			return errors.New("fphttp: MAX_FRAME_SIZE must be between 16384 and 16777215")
+			return errors.New("fphttp: Profile.HTTP2 MAX_FRAME_SIZE must be between 16384 and 16777215")
 		}
 
 	case SettingMaxHeaderListSize:
 		if setting.Val == 0 {
-			return errors.New("fphttp: MAX_HEADER_LIST_SIZE must allow response headers")
+			return errors.New("fphttp: Profile.HTTP2 MAX_HEADER_LIST_SIZE must allow response headers")
 		}
 
 	case SettingEnableConnectProtocol, SettingNoRFC7540Priorities:
 		if setting.Val > 1 {
-			return fmt.Errorf("fphttp: %v must be 0 or 1", setting.ID)
+			return fmt.Errorf("fphttp: Profile.HTTP2 %v must be 0 or 1", setting.ID)
 		}
 	}
 
@@ -109,11 +109,11 @@ func (h HTTP2) validateStreams() error {
 	var problems []error
 
 	if h.ConnectionFlow > math.MaxInt32-initialConnectionWindow {
-		problems = append(problems, errors.New("fphttp: ConnectionFlow plus the initial window exceeds 2147483647"))
+		problems = append(problems, errors.New("fphttp: Profile.HTTP2.ConnectionFlow plus the initial window exceeds 2147483647"))
 	}
 
 	if h.InitialStreamID != 0 && (h.InitialStreamID%2 == 0 || h.InitialStreamID > math.MaxInt32) {
-		problems = append(problems, errors.New("fphttp: InitialStreamID must be an odd 31-bit stream ID"))
+		problems = append(problems, errors.New("fphttp: Profile.HTTP2.InitialStreamID must be an odd 31-bit stream ID"))
 	}
 
 	problems = append(problems, h.HeaderPriority.Validate(h.firstStreamID()))
@@ -128,11 +128,11 @@ func (h HTTP2) validatePriorityFrames() error {
 
 	for index, frame := range h.InitPriorityFrames {
 		if frame.StreamID == 0 || frame.StreamID > math.MaxInt32 {
-			problems = append(problems, fmt.Errorf("fphttp: InitPriorityFrames[%d] requires a non-zero 31-bit StreamID", index))
+			problems = append(problems, fmt.Errorf("fphttp: Profile.HTTP2.InitPriorityFrames[%d] requires a non-zero 31-bit StreamID", index))
 		}
 
 		if frame.StreamDep > math.MaxInt32 || frame.StreamDep == frame.StreamID {
-			problems = append(problems, fmt.Errorf("fphttp: InitPriorityFrames[%d] has an invalid StreamDep", index))
+			problems = append(problems, fmt.Errorf("fphttp: Profile.HTTP2.InitPriorityFrames[%d] has an invalid StreamDep", index))
 		}
 	}
 
@@ -151,7 +151,7 @@ func (h HTTP2) validatePrioritySignals() error {
 		return nil
 	}
 
-	return errors.New("fphttp: NO_RFC7540_PRIORITIES = 1 conflicts with InitPriorityFrames")
+	return errors.New("fphttp: Profile.HTTP2 NO_RFC7540_PRIORITIES = 1 conflicts with InitPriorityFrames")
 }
 
 // firstStreamID returns the stream ID of the first request.

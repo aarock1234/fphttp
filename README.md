@@ -240,15 +240,20 @@ browser sends one, `Referer`, the default `Accept`, the request priority, the su
 whether `Client.Jar` adds cookies. A field you set wins over the generated one. The Client carries both fields to
 every redirect hop.
 
-| `Destination`                                                              | Use it for                                    | `Sec-Fetch-Mode` | Cookies from `Client.Jar`      |
-| -------------------------------------------------------------------------- | --------------------------------------------- | ---------------- | ------------------------------ |
-| Zero value, `DestinationDocument`                                          | A page load: typing a URL or following a link | `navigate`       | Yes                            |
-| `DestinationIframe`, `DestinationFrame`                                    | A page inside a frame                         | `navigate`       | Yes                            |
-| `DestinationEmpty`                                                         | `fetch()` and `XMLHttpRequest`                | `cors`           | Same origin as `Initiator`     |
-| `DestinationScript`, `DestinationStyle`, `DestinationImage`                | Scripts, style sheets, and images             | `no-cors`        | Yes                            |
-| `DestinationFont`, `DestinationManifest`                                   | Web fonts and app manifests                   | `cors`           | Same origin as `Initiator`     |
-| `DestinationAudio`, `DestinationVideo`                                     | Media; Chromium also sends `Range: bytes=0-`  | `no-cors`        | Yes                            |
-| `DestinationWorker`, `DestinationSharedWorker`, `DestinationServiceWorker` | Worker scripts                                | `same-origin`    | Same origin as `Initiator`     |
+| `Destination`                                                              | Use it for                                    | `Sec-Fetch-Mode`          | Cookies from `Client.Jar`  |
+| -------------------------------------------------------------------------- | --------------------------------------------- | ------------------------- | -------------------------- |
+| Zero value, `DestinationDocument`                                          | A page load: typing a URL or following a link | `navigate`                | Yes                        |
+| `DestinationIframe`, `DestinationFrame`                                    | A page inside a frame                         | `navigate`                | Yes                        |
+| `DestinationObject`, `DestinationEmbed`                                    | Object and embed content, loaded as a page    | `navigate`                | Yes                        |
+| `DestinationEmpty`                                                         | `fetch()` and `XMLHttpRequest`                | `cors`                    | Same origin as `Initiator` |
+| `DestinationScript`, `DestinationStyle`, `DestinationImage`                | Scripts, style sheets, and images             | `no-cors`                 | Yes                        |
+| `DestinationTrack`, `DestinationXSLT`                                      | Text tracks and XSLT style sheets             | `no-cors`                 | Yes                        |
+| `DestinationAudio`, `DestinationVideo`                                     | Media; Chromium also sends `Range: bytes=0-`  | `no-cors`                 | Yes                        |
+| `DestinationFont`                                                          | Web fonts                                     | `cors`                    | Same origin as `Initiator` |
+| `DestinationManifest`                                                      | App manifests                                 | `cors`                    | No                         |
+| `DestinationWorker`, `DestinationSharedWorker`, `DestinationServiceWorker` | Worker scripts                                | `same-origin`             | Same origin as `Initiator` |
+| `DestinationReport`                                                        | Reports, such as CSP violations               | `no-cors`                 | Same origin as `Initiator` |
+| `DestinationWebSocket`                                                     | WebSocket handshakes, detected for you        | `websocket`, Firefox only | Yes                        |
 
 Those same origin rows treat a nil `Initiator` as a request the user started, so it gets cookies from
 `Client.Jar` on any host.
@@ -256,6 +261,21 @@ Those same origin rows treat a nil `Initiator` as a request the user started, so
 Only page loads send `Sec-Fetch-User: ?1`. For a navigation started by a script, set `Sec-Fetch-User` to an empty
 value. Set `Initiator` to the page's full URL rather than its origin, because `Referer` comes from it. A
 `Destination` that is not one of the constants fails the request.
+
+Brave profiles send `Sec-GPC: 1` on every request, because Brave turns Global Privacy Control on by default.
+
+### WebSockets
+
+A request carrying `Upgrade: websocket` gets `DestinationWebSocket` when you leave `Destination` zero, so a
+WebSocket library that sends its handshake through a `Client` looks like the browser's handshake instead of a page
+load. fphttp adds the page's `Origin`, `Pragma: no-cache`, `Cache-Control: no-cache`, `Accept-Encoding`, and
+cookies, plus `Accept: */*` and `Sec-Fetch-*` for Firefox, in the browser's handshake order. Chromium sends no
+`Accept`, no `Sec-Fetch-*`, and no client hints on a handshake, and fphttp matches it.
+
+`Upgrade`, `Connection`, and the `Sec-WebSocket-*` fields belong to the library: fphttp never generates them, but
+places and spells them as the browser does. Set `Initiator` to the page that opens the socket; without one, `Origin`
+is the socket's own origin. Handshakes travel over HTTP/1.1, because Go's Transport rejects the `:protocol` field
+of an HTTP/2 extended CONNECT. Safari's handshake is not verified, so Safari profiles add only `Origin`.
 
 ## Per request order and casing
 
@@ -285,6 +305,8 @@ req.H2PriorityHeader = "u=2"
 | `Priority` field    | `Header["Priority"]`, then `H2PriorityHeader` | The release's value for the `Destination`                                          | `H2PriorityHeader` is sent on HTTP/2 only                                                   |
 
 An empty slice here means empty but not nil; a nil field falls back. Clones and redirects keep every override.
+A WebSocket handshake from a Chromium or Firefox profile falls back to the browser's handshake order instead of
+`Profile.SubresourceHeaderOrder`.
 
 ## Customizing a profile
 
@@ -349,7 +371,9 @@ wireOnly.Header = nil
 ```
 
 fphttp then sends only your headers, including your own `User-Agent`, with the profile's TLS, HTTP/2, order, and
-casing. A `Profile` literal behaves the same way, since it has no release to generate fields from.
+casing. Each request still gets the browser's HTTP/2 priority for its `Destination`. A `Profile` literal behaves
+the same way, except that every request gets `HTTP2.HeaderPriority`, since it has no release to generate fields
+or priorities from.
 
 ## How it behaves
 

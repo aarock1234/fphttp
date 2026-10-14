@@ -94,6 +94,7 @@ func (t *Transport) validateProfile(snapshot *Profile) error {
 		snapshot.validate(),
 		validateTLSOwnership(snapshot, t.TLSClientConfig),
 		t.validateProfileProtocols(),
+		t.validateProfileHTTP2Limits(snapshot),
 	)
 }
 

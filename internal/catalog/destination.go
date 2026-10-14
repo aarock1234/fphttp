@@ -34,10 +34,16 @@ const (
 	destinationServiceWorker
 	destinationReport
 	destinationXSLT
+
+	// destinationWebSocket is a WebSocket opening handshake. "websocket" is
+	// fphttp's name for it, not a Sec-Fetch-Dest value: browsers send
+	// another value or none (see Entry.WebSocketSecFetchDest).
+	destinationWebSocket
 )
 
 // parseDestination returns the destination a Sec-Fetch-Dest value names.
-// The empty string is a top-level page load.
+// The empty string is a top-level page load, and "websocket" is a WebSocket
+// handshake.
 func parseDestination(value string) fetchDestination {
 	switch value {
 	case "", "document":
@@ -76,6 +82,8 @@ func parseDestination(value string) fetchDestination {
 		return destinationReport
 	case "xslt":
 		return destinationXSLT
+	case "websocket":
+		return destinationWebSocket
 	default:
 		return destinationUnknown
 	}

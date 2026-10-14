@@ -133,6 +133,9 @@ func http2RoundTrip(req *Request, rt func(*http2.ClientRequest) (*http2.ClientRe
 		H2Priority:        req.H2Priority,
 		H2PriorityHeader:  req.H2PriorityHeader,
 		LastFields:        req.profileHop.http2Fields, // fphttp: a Profile's HTTP/2-only fields
+
+		// fphttp: the catalog chose H2Priority, not the caller.
+		H2PriorityFromProfile: req.profileHop.catalogH2Priority,
 	})
 	if err != nil {
 		return nil, err
@@ -327,8 +330,9 @@ func (t transportConfig) Fingerprint() *fingerprint.Config {
 	}
 
 	return &fingerprint.Config{
-		HeaderOrder:       snapshot.HeaderOrder,
-		PseudoHeaderOrder: snapshot.PseudoHeaderOrder,
-		H2:                snapshot.HTTP2,
+		HeaderOrder:          snapshot.HeaderOrder,
+		PseudoHeaderOrder:    snapshot.PseudoHeaderOrder,
+		H2:                   snapshot.HTTP2,
+		ChromiumDependencies: t.t.usesChromiumDependencies(),
 	}
 }

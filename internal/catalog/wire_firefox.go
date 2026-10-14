@@ -434,6 +434,7 @@ func newFirefoxWire(features *FirefoxWire) *Wire {
 		PseudoHeaderOrder: firefoxPseudoHeaderOrder,
 		NavigationOrder:   firefoxNavigationOrder,
 		SubresourceOrder:  firefoxSubresourceOrder,
+		WebSocketOrder:    firefoxWebSocketOrder,
 		H1HeaderCase:      firefoxHeaderCase,
 		Firefox:           features,
 		firefoxFeatures:   private,

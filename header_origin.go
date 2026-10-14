@@ -6,7 +6,16 @@ import "net/url"
 // browsers send one (see needsOrigin). The value is the initiator's origin,
 // or "null" where the redirect chain or the referrer policy hides it (see
 // originValue). A request the user started carries no Origin.
+//
+// A WebSocket handshake always carries the Origin of the page that opens
+// it (see webSocketOrigin).
 func (g *fieldGenerator) originField() {
+	if g.webSocket() {
+		g.addMissing("Origin", webSocketOrigin(g.request))
+
+		return
+	}
+
 	if g.request.Initiator == nil || !g.needsOrigin() {
 		return
 	}

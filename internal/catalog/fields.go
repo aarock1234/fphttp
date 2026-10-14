@@ -12,10 +12,17 @@ type Field struct {
 // HTTP2OnlyFields returns the fields the release appends after every other
 // field on HTTP/2 requests and never sends on HTTP/1.1, in wire order, for a
 // request destination (see Accept). Firefox sends te: trailers on every
-// HTTP/2 request; other browsers send nothing extra. It returns nil for an
-// unknown destination. The caller owns the returned slice.
+// HTTP/2 request except a WebSocket handshake (Http2Compressor::
+// EncodeHeaderBlock skips it for extended CONNECT); other browsers send
+// nothing extra. It returns nil for an unknown destination. The caller owns
+// the returned slice.
 func (e Entry) HTTP2OnlyFields(destination string) []Field {
-	if e.Family != FamilyFirefox || parseDestination(destination) == destinationUnknown {
+	if e.Family != FamilyFirefox {
+		return nil
+	}
+
+	kind := parseDestination(destination)
+	if kind == destinationUnknown || kind == destinationWebSocket {
 		return nil
 	}
 
@@ -38,7 +45,9 @@ func (e Entry) HTTP2OnlyFields(destination string) []Field {
 // browser/net/global_privacy_control_network_delegate_helper.cc). Chromium
 // and Firefox mark a service worker's main script request with
 // Service-Worker: script (Chromium service_worker_new_script_loader.cc,
-// Firefox ServiceWorkerScriptCache.cpp).
+// Firefox ServiceWorkerScriptCache.cpp). Chromium and Firefox open a
+// WebSocket with the cache bypassed, which sends Pragma: no-cache and
+// Cache-Control: no-cache (see webSocketCacheFields).
 func (e Entry) RequestFields(destination string) []Field {
 	kind := parseDestination(destination)
 	if kind == destinationUnknown {
@@ -59,6 +68,10 @@ func (e Entry) RequestFields(destination string) []Field {
 			Name:  "Service-Worker",
 			Value: "script",
 		})
+	}
+
+	if kind == destinationWebSocket && e.Family != FamilySafari {
+		fields = append(fields, webSocketCacheFields()...)
 	}
 
 	return fields

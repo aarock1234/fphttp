@@ -64,6 +64,14 @@ var (
 		group:   11,
 		urgency: 4,
 	}
+
+	// firefoxUnblocked is a request that head CSS and scripts never block,
+	// such as a WebSocket handshake; it depends on the "other" group
+	// (GetPriorityDependencyFromTransaction).
+	firefoxUnblocked = firefoxClass{
+		group:   5,
+		urgency: 3,
+	}
 )
 
 // firefoxRequest is how Firefox's loaders classify one kind of request.
@@ -80,7 +88,7 @@ type firefoxRequest struct {
 
 // firefoxRequests maps destinations to the class and priority Firefox's
 // loaders assign, from nsDocShell, css::Loader, ScriptLoader, imgLoader,
-// FontPreloader and FontLoaderUtils, and FetchDriver.
+// FontPreloader and FontLoaderUtils, FetchDriver, and WebSocketChannel.
 //
 // Iframes, media, tracks, manifests, objects, embeds, workers, reports, and
 // XSLT are absent because their loaders were not traced.
@@ -120,6 +128,14 @@ var firefoxRequests = map[fetchDestination]firefoxRequest{
 	// fetch(); XMLHttpRequest is Unblocked instead.
 	destinationEmpty: {
 		class:    firefoxUnclassified,
+		priority: firefoxPriorityNormal,
+	},
+
+	// WebSocketChannel::SetupRequest marks the handshake Unblocked, and
+	// Http2Session creates its stream at PRIORITY_NORMAL. Urgency 3 without
+	// "i" serializes to nothing, so it sends no Priority field.
+	destinationWebSocket: {
+		class:    firefoxUnblocked,
 		priority: firefoxPriorityNormal,
 	},
 }

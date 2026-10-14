@@ -38,6 +38,11 @@ type Wire struct {
 	// XHR, and subresource requests.
 	SubresourceOrder []string
 
+	// WebSocketOrder lists canonical field names in wire order for
+	// WebSocket handshakes. It is nil when the browser's handshake was not
+	// verified, and SubresourceOrder applies instead.
+	WebSocketOrder []string
+
 	// H1HeaderCase maps canonical field names to the browser's HTTP/1.1
 	// spelling. It is nil when the browser writes canonical names.
 	H1HeaderCase map[string]string

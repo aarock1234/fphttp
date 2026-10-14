@@ -351,6 +351,7 @@ func newChromiumWire(features *ChromiumWire) *Wire {
 		PseudoHeaderOrder: chromiumPseudoHeaderOrder,
 		NavigationOrder:   chromiumNavigationOrder,
 		SubresourceOrder:  chromiumSubresourceOrder,
+		WebSocketOrder:    chromiumWebSocketOrder,
 		H1HeaderCase:      chromiumHeaderCase,
 		Chromium:          features,
 		chromiumFeatures:  private,

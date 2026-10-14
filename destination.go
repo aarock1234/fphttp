@@ -77,6 +77,30 @@ const (
 
 	// DestinationXSLT is an XSLT style sheet.
 	DestinationXSLT Destination = "xslt"
+
+	// DestinationWebSocket is a WebSocket opening handshake: an HTTP/1.1
+	// request carrying Upgrade: websocket, or an HTTP/2 extended CONNECT
+	// whose :protocol is websocket. A Transport with a Profile gives a
+	// handshake this Destination when Destination is zero, so a WebSocket
+	// library that sends its handshake through a Client gets it without
+	// setting it. Like Go's, the Transport rejects a :protocol header
+	// field, so handshakes currently travel over HTTP/1.1, on a connection
+	// of their own when the request also carries Connection: Upgrade.
+	//
+	// Unlike the other constants, it is not a Sec-Fetch-Dest value.
+	// Chromium sends no Sec-Fetch-* fields on a handshake, and Firefox sends
+	// Sec-Fetch-Mode: websocket with Sec-Fetch-Dest "websocket" through
+	// release 115 and "empty" from 116. The handshake carries the browser's
+	// Origin, cache-bypassing Pragma and Cache-Control, Accept-Encoding,
+	// Accept-Language, and cookies, and no navigation fields. Initiator is
+	// the page that opens the socket; when it is nil, the handshake comes
+	// from a page on the target's own origin.
+	//
+	// fphttp never generates Upgrade, Connection, or the Sec-WebSocket-*
+	// fields, which belong to the WebSocket library; the browser's header
+	// order still places them. Safari's handshake is not verified, so a
+	// Safari profile adds only Origin.
+	DestinationWebSocket Destination = "websocket"
 )
 
 // fetchMode is a Fetch request mode, as sent in Sec-Fetch-Mode.
@@ -96,6 +120,9 @@ const (
 	// modeSameOrigin fails unless the request stays on its initiator's
 	// origin.
 	modeSameOrigin fetchMode = "same-origin"
+
+	// modeWebSocket opens a WebSocket.
+	modeWebSocket fetchMode = "websocket"
 )
 
 // credentialsMode is a Fetch credentials mode: whether a request carries
@@ -137,7 +164,8 @@ func (d Destination) valid() bool {
 		DestinationSharedWorker,
 		DestinationServiceWorker,
 		DestinationReport,
-		DestinationXSLT:
+		DestinationXSLT,
+		DestinationWebSocket:
 		return true
 	default:
 		return false
@@ -195,8 +223,8 @@ func (d Destination) secFetchDest() string {
 
 // mode returns the request mode a browser uses for d, as sent in
 // Sec-Fetch-Mode. Navigations use navigate; fetch(), fonts, and manifests
-// use cors; worker scripts use same-origin; every other subresource uses
-// no-cors. d must be valid.
+// use cors; worker scripts use same-origin; WebSocket handshakes use
+// websocket; every other subresource uses no-cors. d must be valid.
 func (d Destination) mode() fetchMode {
 	if d.navigation() {
 		return modeNavigate
@@ -207,6 +235,8 @@ func (d Destination) mode() fetchMode {
 		return modeCORS
 	case DestinationWorker, DestinationSharedWorker, DestinationServiceWorker:
 		return modeSameOrigin
+	case DestinationWebSocket:
+		return modeWebSocket
 	default:
 		return modeNoCORS
 	}
@@ -214,9 +244,13 @@ func (d Destination) mode() fetchMode {
 
 // credentials returns the credentials mode a browser uses for d.
 // fetch(), fonts, reports, and worker scripts use same-origin; manifests
-// omit credentials; navigations and every other subresource use include. An
-// invalid Destination omits credentials, so a Client never applies its Jar
-// to a request whose kind it cannot tell.
+// omit credentials; navigations, WebSocket handshakes, and every other
+// subresource use include. An invalid Destination omits credentials, so a
+// Client never applies its Jar to a request whose kind it cannot tell.
+//
+// Fetch opens a WebSocket with credentials mode include, and Chromium
+// (URLRequestHttpJob::AddCookieHeaderAndStart) and Firefox send the
+// cookies of the socket's URL whatever the page's origin.
 //
 // Chromium and Firefox fetch a manifest without credentials unless its link
 // is crossorigin="use-credentials", which a Destination cannot express.

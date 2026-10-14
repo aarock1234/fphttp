@@ -54,6 +54,7 @@ var knownDestinations = []http.Destination{
 	http.DestinationServiceWorker,
 	http.DestinationReport,
 	http.DestinationXSLT,
+	http.DestinationWebSocket,
 }
 
 // options holds the validated command-line flags.

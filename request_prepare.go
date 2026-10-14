@@ -28,6 +28,10 @@ type profileHop struct {
 	// as the profile asked, not as the caller asked, and the Transport
 	// decodes it (see decodeResponse).
 	acceptEncoding bool
+
+	// catalogH2Priority reports that selectHTTP2Priority set H2Priority
+	// from the catalog, so the priority is the profile's, not the caller's.
+	catalogH2Priority bool
 }
 
 // prepareRequest returns the request that a Transport sends for one http or
@@ -52,7 +56,9 @@ type profileHop struct {
 //
 // A CONNECT request, which opens a tunnel, replaces steps 2 to 4 with the
 // few fields the browser sends on its own tunnel request
-// (prepareTunnelRequest), so it never looks like a page load.
+// (prepareTunnelRequest), so it never looks like a page load. A WebSocket
+// handshake with a zero Destination, including an HTTP/2 extended CONNECT,
+// gets DestinationWebSocket on the clone (see Request.destination).
 //
 // The Transport then validates the clone's fields as upstream does. An
 // unknown Destination fails the request, because every generated field
@@ -68,8 +74,9 @@ func (t *Transport) prepareRequest(req *Request) (*Request, error) {
 	}
 
 	prepared := newPreparedRequest(req, snapshot)
+	prepared.Destination = req.destination()
 
-	if prepared.Method == MethodConnect {
+	if prepared.opensTunnel() {
 		prepareTunnelRequest(prepared, snapshot)
 	} else {
 		t.addBrowserFields(prepared, snapshot)

@@ -179,9 +179,40 @@ var chromiumSubresourceOrder = []string{
 	"If-Modified-Since",
 }
 
+// chromiumWebSocketOrder is the order of a Chromium WebSocket handshake,
+// from source; no handshake was captured. HttpNetworkTransaction writes
+// Host, Connection, the cache-bypass fields, and authorization, then merges
+// the extra fields in insertion order: the browser's User-Agent, Upgrade,
+// Origin, and Sec-WebSocket-Version from WebSocketStreamRequestImpl, then
+// Accept-Encoding, Accept-Language, and Cookie from URLRequestHttpJob, then
+// Brave's Sec-GPC from the network delegate. The extra Connection: Upgrade
+// replaces keep-alive in place. The HTTP/1.1 handshake stream appends
+// Sec-WebSocket-Key, Sec-WebSocket-Extensions, and Sec-WebSocket-Protocol
+// last.
+var chromiumWebSocketOrder = []string{
+	"Host",
+	"Connection",
+	"Pragma",
+	"Cache-Control",
+	"Proxy-Authorization",
+	"Authorization",
+	"User-Agent",
+	"Upgrade",
+	"Origin",
+	"Sec-Websocket-Version",
+	"Accept-Encoding",
+	"Accept-Language",
+	"Cookie",
+	"Sec-Gpc",
+	"Sec-Websocket-Key",
+	"Sec-Websocket-Extensions",
+	"Sec-Websocket-Protocol",
+}
+
 // chromiumHeaderCase spells the fields Chromium does not write in canonical
-// form on HTTP/1.1: client hints come from lowercase name tables, and DNT
-// and Sec-GPC are upper-case constants.
+// form on HTTP/1.1: client hints come from lowercase name tables, DNT and
+// Sec-GPC are upper-case constants, and the WebSocket fields keep the
+// spelling of net/websockets/websocket_handshake_constants.h.
 //
 // Save-Data is lowercase only on navigations; Blink subresources send
 // "Save-Data". The navigation spelling is used because the zero request
@@ -214,6 +245,10 @@ var chromiumHeaderCase = map[string]string{
 	"Sec-Ch-Viewport-Width":               "sec-ch-viewport-width",
 	"Sec-Ch-Width":                        "sec-ch-width",
 	"Sec-Gpc":                             "Sec-GPC",
+	"Sec-Websocket-Extensions":            "Sec-WebSocket-Extensions",
+	"Sec-Websocket-Key":                   "Sec-WebSocket-Key",
+	"Sec-Websocket-Protocol":              "Sec-WebSocket-Protocol",
+	"Sec-Websocket-Version":               "Sec-WebSocket-Version",
 	"Viewport-Width":                      "viewport-width",
 	"Width":                               "width",
 }
@@ -292,13 +327,52 @@ var firefoxSubresourceOrder = []string{
 	"Cache-Control",
 }
 
+// firefoxWebSocketOrder is Firefox's field insertion order for a WebSocket
+// handshake, the same from 102 to 158, from source; no handshake was
+// captured. The standard fields come first, then the fields
+// WebSocketChannel::SetupRequest sets, then the BeginConnect fields as in
+// firefoxNavigationOrder, fetch metadata, the cache-bypass fields, and
+// Upgrade last. Connection keeps its BeginConnect position, where Firefox
+// merges Upgrade into it ("keep-alive, Upgrade").
+var firefoxWebSocketOrder = []string{
+	"Host",
+	"User-Agent",
+	"Accept",
+	"Accept-Language",
+	"Accept-Encoding",
+	"Sec-Websocket-Version",
+	"Origin",
+	"Sec-Websocket-Protocol",
+	"Sec-Websocket-Extensions",
+	"Sec-Websocket-Key",
+	"Sec-Fetch-Storage-Access",
+	"Dnt",
+	"Sec-Gpc",
+	"Proxy-Authorization",
+	"Authorization",
+	"Connection",
+	"Cookie",
+	"Sec-Fetch-Dest",
+	"Sec-Fetch-Mode",
+	"Sec-Fetch-Site",
+	"Priority",
+	"Pragma",
+	"Cache-Control",
+	"Upgrade",
+}
+
 // firefoxHeaderCase spells the fields Firefox does not write in canonical
-// form on HTTP/1.1, from its header atom table. TE is listed for
-// completeness; Firefox sends it on HTTP/2 only.
+// form on HTTP/1.1, from its header atom table and the names
+// WebSocketChannel sets. TE is listed for completeness; Firefox sends it on
+// HTTP/2 only.
 var firefoxHeaderCase = map[string]string{
-	"Dnt":     "DNT",
-	"Sec-Gpc": "Sec-GPC",
-	"Te":      "TE",
+	"Dnt":                      "DNT",
+	"Sec-Gpc":                  "Sec-GPC",
+	"Sec-Websocket-Extensions": "Sec-WebSocket-Extensions",
+	"Sec-Websocket-Key":        "Sec-WebSocket-Key",
+	"Sec-Websocket-Protocol":   "Sec-WebSocket-Protocol",
+	"Sec-Websocket-Version":    "Sec-WebSocket-Version",
+	"Te":                       "TE",
 }
 
 // safariNavigationOrder is the captured Safari 26 and 27 navigation order on

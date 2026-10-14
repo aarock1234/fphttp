@@ -343,11 +343,11 @@ func (pconn *persistConn) filterApplicationProtocols(c *utls.UConn) error {
 // convertUTLSConnectionState converts a utls ConnectionState to a
 // standard crypto/tls ConnectionState.
 //
-// Audit this conversion whenever either TLS package adds fields. The private
-// keying-material exporter cannot be translated. Callers must not use
-// ExportKeyingMaterial on this state.
+// Audit this conversion whenever either TLS package adds fields.
+// ExportKeyingMaterial on the result uses the uTLS connection's exporter
+// (see setKeyingMaterialExporter).
 func convertUTLSConnectionState(ucs utls.ConnectionState) tls.ConnectionState {
-	return tls.ConnectionState{
+	state := tls.ConnectionState{
 		Version:                     ucs.Version,
 		HandshakeComplete:           ucs.HandshakeComplete,
 		DidResume:                   ucs.DidResume,
@@ -365,4 +365,7 @@ func convertUTLSConnectionState(ucs utls.ConnectionState) tls.ConnectionState {
 		HelloRetryRequest:           ucs.HelloRetryRequest,
 		LocalCertificate:            ucs.LocalCertificate,
 	}
+	setKeyingMaterialExporter(&state, ucs)
+
+	return state
 }

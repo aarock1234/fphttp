@@ -40,6 +40,10 @@ func (e Entry) Priority(destination string) RequestPriority {
 
 	switch e.Family {
 	case FamilyChromium:
+		if kind == destinationWebSocket {
+			return chromiumWebSocketPriority()
+		}
+
 		return e.chromiumPriority(kind)
 	case FamilyFirefox:
 		return e.firefoxPriority(kind)

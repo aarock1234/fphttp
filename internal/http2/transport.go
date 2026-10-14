@@ -165,6 +165,7 @@ type ClientConn struct {
 	firstStreamID    uint32
 	pendingRequests  int                       // requests blocked and waiting to be sent because len(streams) == maxConcurrentStreams
 	pings            map[[8]byte]chan struct{} // in flight ping data to notification channel
+	dependencies     *streamDependencies       // fphttp: Chromium HEADERS dependencies, or nil (transport_dependencies.go)
 	br               *bufio.Reader
 	lastActive       time.Time
 	lastIdle         time.Time // time last idle
@@ -178,6 +179,7 @@ type ClientConn struct {
 	pingTimeout                 time.Duration
 	extendedConnectAllowed      bool
 	strictMaxConcurrentStreams  bool
+	alpsMaxConcurrentStreams    bool // fphttp: ALPS set maxConcurrentStreams (transport_alps.go)
 
 	// rstStreamPingsBlocked works around an unfortunate gRPC behavior.
 	// gRPC strictly limits the number of PING frames that it will receive.
@@ -610,6 +612,9 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook 
 	if fp := cc.fingerprint; fp != nil && fp.H2.InitialStreamID != 0 {
 		cc.nextStreamID = fp.H2.InitialStreamID
 	}
+	if fp := cc.fingerprint; fp != nil && fp.ChromiumDependencies {
+		cc.dependencies = new(streamDependencies)
+	}
 	cc.firstStreamID = cc.nextStreamID
 
 	if fp := cc.fingerprint; fp != nil && fp.H2.Settings != nil {
@@ -663,6 +668,10 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook 
 	if cs, ok := c.(connectionStater); ok {
 		state := cs.ConnectionState()
 		cc.tlsState = &state
+	}
+	if err := cc.applyPeerApplicationSettings(c); err != nil {
+		cc.Close()
+		return nil, err
 	}
 
 	initialSettings := []Setting{
@@ -1523,9 +1532,12 @@ func (cs *clientStream) encodeAndWriteHeaders(req *ClientRequest) error {
 	}
 
 	priority := req.H2Priority
+	fromProfile := req.H2PriorityFromProfile
 	if priority == nil && cc.fingerprint != nil {
 		priority = &cc.fingerprint.H2.HeaderPriority
+		fromProfile = true
 	}
+	priority = cc.headerPriority(cs.ID, priority, fromProfile)
 	if priority != nil {
 		// An enabled priority is allowed with NO_RFC7540_PRIORITIES = 1:
 		// Firefox 132 and later send both.
@@ -2066,6 +2078,7 @@ func (cc *ClientConn) forgetStreamID(id uint32) {
 	cc.mu.Lock()
 	slen := len(cc.streams)
 	delete(cc.streams, id)
+	cc.forgetDependency(id)
 	if len(cc.streams) != slen-1 {
 		panic("forgetting unknown stream id")
 	}
@@ -2977,7 +2990,7 @@ func (rl *clientConnReadLoop) processSettingsNoWrite(f *SettingsFrame) error {
 	}
 
 	if !cc.seenSettings {
-		if !seenMaxConcurrentStreams {
+		if !seenMaxConcurrentStreams && !cc.alpsMaxConcurrentStreams {
 			// This was the servers initial SETTINGS frame and it
 			// didn't contain a MAX_CONCURRENT_STREAMS field so
 			// increase the number of concurrent streams this
