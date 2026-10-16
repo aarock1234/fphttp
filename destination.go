@@ -125,22 +125,6 @@ const (
 	modeWebSocket fetchMode = "websocket"
 )
 
-// credentialsMode is a Fetch credentials mode: whether a request carries
-// cookies and stores the cookies its response sets.
-type credentialsMode string
-
-// Credentials modes a Destination implies.
-const (
-	// credentialsOmit never carries cookies.
-	credentialsOmit credentialsMode = "omit"
-
-	// credentialsSameOrigin carries cookies only to the initiator's origin.
-	credentialsSameOrigin credentialsMode = "same-origin"
-
-	// credentialsInclude always carries cookies.
-	credentialsInclude credentialsMode = "include"
-)
-
 // valid reports whether d is the zero Destination or one of the Destination
 // constants.
 func (d Destination) valid() bool {
@@ -257,22 +241,22 @@ func (d Destination) mode() fetchMode {
 // Chromium sends violation reports with same-origin credentials
 // (PingLoader::SendViolationReport); Firefox sends them anonymously, so a
 // Firefox report to its own origin carries cookies it would not.
-func (d Destination) credentials() credentialsMode {
+func (d Destination) credentials() CredentialsMode {
 	if !d.valid() {
-		return credentialsOmit
+		return CredentialsOmit
 	}
 
 	switch d {
 	case DestinationManifest:
-		return credentialsOmit
+		return CredentialsOmit
 	case DestinationEmpty,
 		DestinationFont,
 		DestinationReport,
 		DestinationWorker,
 		DestinationSharedWorker,
 		DestinationServiceWorker:
-		return credentialsSameOrigin
+		return CredentialsSameOrigin
 	default:
-		return credentialsInclude
+		return CredentialsInclude
 	}
 }

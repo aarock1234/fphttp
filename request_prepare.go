@@ -35,8 +35,8 @@ type profileHop struct {
 }
 
 // prepareRequest returns the request that a Transport sends for one http or
-// https hop. Without a profile it returns req itself, so the Transport
-// behaves exactly as upstream.
+// https hop. It validates Credentials even without a profile, in which
+// case it returns req itself without generating browser fields.
 //
 // With a profile it returns a private clone of req, and req and its Header
 // are never modified. The clone is built in these steps:
@@ -64,6 +64,10 @@ type profileHop struct {
 // unknown Destination fails the request, because every generated field
 // depends on it.
 func (t *Transport) prepareRequest(req *Request) (*Request, error) {
+	if err := req.Credentials.validate(); err != nil {
+		return nil, err
+	}
+
 	snapshot := t.profileState.snapshot
 	if snapshot == nil {
 		return req, nil

@@ -290,19 +290,20 @@ type Request struct {
 
 	// Destination is the kind of resource requested. The zero value is a
 	// top-level page load. It selects Sec-Fetch-Dest, Sec-Fetch-Mode, Accept,
-	// priority, and whether a Client applies cookies.
+	// priority, and the default credentials mode.
 	//
-	// A Client applies and stores its Jar's cookies for every navigation and
-	// for most subresources. For fetch(), font, report, and worker requests
-	// it does so only when Initiator is nil or has the same origin as the
-	// request URL, and it never does for a manifest or for a Destination
-	// that is not one of the Destination constants. A request that is not a
+	// With CredentialsDefault, a Client applies and stores its Jar's cookies
+	// for every navigation and most subresources. For fetch(), font, report,
+	// and worker requests it does so only when Initiator is nil or has the
+	// same origin as the request URL. It never does for a manifest or an
+	// unknown Destination. A request that is not a
 	// navigation can also decline the Jar's cookies with a present but empty
 	// Cookie field, such as Header["Cookie"] = []string{""}, for every
 	// redirect hop the Client follows, including hops to another host. A
 	// navigation (the zero value, DestinationDocument, DestinationIframe,
-	// DestinationFrame, DestinationObject, or DestinationEmbed) always gets
-	// them, as without Destination.
+	// DestinationFrame, DestinationObject, or DestinationEmbed) gets them
+	// whenever its credentials mode allows them, even with an empty Cookie
+	// field.
 	//
 	// A zero Destination on a WebSocket handshake, a request carrying
 	// Upgrade: websocket or an HTTP/2 extended CONNECT whose :protocol is
@@ -324,6 +325,27 @@ type Request struct {
 	// from it, so it should be the page's full URL rather than only its
 	// origin. This field is ignored by the HTTP server.
 	Initiator *url.URL
+
+	// Credentials controls whether a Client sends and stores its Jar's
+	// cookies and whether a Transport allows Clear-Site-Data to clear client
+	// hints. The zero value, CredentialsDefault, uses Destination's existing
+	// defaults. Set CredentialsInclude for a cross-origin fetch that needs
+	// cookies, CredentialsSameOrigin to restrict cookies to Initiator's
+	// origin, or CredentialsOmit to disable jar cookies.
+	//
+	// The Client preserves Credentials across redirects and evaluates it
+	// against each hop's URL and the original Initiator. A nil Initiator
+	// allows cookies in CredentialsSameOrigin mode. Cookie domain, path,
+	// expiry, and Secure restrictions still apply through the Jar. A present
+	// but empty Cookie field still declines sending jar cookies for requests
+	// that are not navigations; it does not prevent storing response cookies.
+	//
+	// Credentials does not change Initiator, Destination, generated browser
+	// headers, caller-supplied Cookie or Authorization fields, URL user info,
+	// or TLS client certificates. It does not enforce CORS or clear the Jar
+	// through Clear-Site-Data. Unknown modes fail before the request is sent.
+	// This field is ignored by the HTTP server.
+	Credentials CredentialsMode
 
 	// HeaderOrder specifies the order in which HTTP/1.1 headers are
 	// written on the wire. Names match fields ignoring case, so

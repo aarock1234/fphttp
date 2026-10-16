@@ -174,6 +174,12 @@ func refererForURL(lastReq, newReq *url.URL, explicitRef string) string {
 
 // didTimeout is non-nil only if err != nil.
 func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
+	if err := req.Credentials.validate(); err != nil {
+		req.closeBody()
+
+		return nil, alwaysFalse, err
+	}
+
 	cookieURL := req.URL
 	if req.Host != "" {
 		cookieURL = cloneURL(cookieURL)
@@ -689,6 +695,7 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 				H2PriorityHeader:  ireq.H2PriorityHeader,
 				Destination:       ireq.Destination,
 				Initiator:         cloneURL(ireq.Initiator),
+				Credentials:       ireq.Credentials,
 				ctx:               ireq.ctx,
 			}
 			if ireq.H2Priority != nil {
