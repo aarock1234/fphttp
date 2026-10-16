@@ -142,24 +142,14 @@ applies the browser's cookie rules. Headers you set yourself always win. The zer
 | `DestinationIframe`                                         | Pages inside frames                          |
 | `DestinationWebSocket`                                      | WebSocket handshakes, detected automatically |
 
-For a cross-origin `fetch()` that needs cookies, keep the real `Initiator` and `Destination` and set:
+For a cross-origin `fetch()` that needs cookies, also set:
 
 ```go
 req.Credentials = http.CredentialsInclude
 ```
 
-| `Credentials` | Jar cookie behavior |
-| --- | --- |
-| Zero value, `CredentialsDefault` | Uses the destination's defaults; `fetch()` uses same-origin |
-| `CredentialsInclude` | Sends and stores eligible cookies across origins |
-| `CredentialsSameOrigin` | Sends and stores cookies only for the initiator's origin; a nil initiator allows them |
-| `CredentialsOmit` | Neither sends nor stores jar cookies |
-
-The mode is preserved across redirects and evaluated for each hop. It also controls whether
-`Clear-Site-Data` may clear client hints. Cookie jar restrictions still apply. Explicit `Cookie` and
-`Authorization` headers are left as supplied, and this option does not enforce CORS or clear the cookie jar.
-A present but empty `Cookie` field still suppresses sending jar cookies on subresource requests, including
-with `CredentialsInclude`, without preventing response cookie storage.
+This sends and stores eligible jar cookies across origins, including redirects. Leave it unset for the
+destination's defaults, or use `CredentialsSameOrigin` or `CredentialsOmit` to restrict jar cookies.
 
 Header order and HTTP/1.1 casing can also be set per request, without opening new connections:
 
