@@ -21,7 +21,7 @@ type RequestPriority struct {
 	Field string
 
 	// FieldOnHTTP1 reports that Field is also sent on HTTP/1.1. Firefox
-	// sends it on HTTP/1.1 and HTTP/2; Chromium and Safari send it on
+	// and Safari send it on HTTP/1.1 and HTTP/2; Chromium sends it on
 	// HTTP/2 only.
 	FieldOnHTTP1 bool
 }

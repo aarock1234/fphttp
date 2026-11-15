@@ -48,9 +48,9 @@ func (g *fieldGenerator) priority() {
 // priorityField adds the release's extensible Priority field (RFC 9218) for
 // the request's Destination, unless the request sets a Priority field or
 // H2PriorityHeader itself. A release that also sends the field on HTTP/1.1,
-// as Firefox does, gets a regular Priority field. A release that sends it on
-// HTTP/2 only, as Chromium and Safari do, gets H2PriorityHeader, which only
-// the HTTP/2 transport writes.
+// as Firefox and Safari do, gets a regular Priority field. A release that
+// sends it on HTTP/2 only, as Chromium does, gets H2PriorityHeader, which
+// only the HTTP/2 transport writes.
 func (g *fieldGenerator) priorityField(priority catalog.RequestPriority) {
 	request := g.request
 	if priority.Field == "" || g.has("Priority") || request.H2PriorityHeader != "" {
