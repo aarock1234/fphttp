@@ -382,9 +382,11 @@ var firefoxHeaderCase = map[string]string{
 //
 // Fields after Accept-Encoding are not captured; they keep fphttp v1's
 // placement of unlisted fields, in lexical order after the captured ones.
+// Connection ends the order: published HTTP/1.1 page loads from Safari 18.6
+// on iPhone and Safari 26.2 on macOS end with Connection: keep-alive, after
+// Cookie when there is one.
 var safariNavigationOrder = []string{
 	"Host",
-	"Connection",
 	"Sec-Fetch-Dest",
 	"User-Agent",
 	"Accept",
@@ -404,15 +406,17 @@ var safariNavigationOrder = []string{
 	"Pragma",
 	"Proxy-Authorization",
 	"Referer",
+	"Connection",
 }
 
 // safariMacSubresourceOrder is the captured Safari 27 macOS fetch order,
 // where Pragma precedes Sec-Fetch-Site. Safari 26.0 shares it without a
 // fetch capture of its own. Fields after Accept-Encoding are not captured
-// and keep fphttp v1's lexical placement.
+// and keep fphttp v1's lexical placement. Connection ends the order: a
+// published HTTP/1.1 script load from Safari 26.0.1 on macOS ends with
+// Cookie and then Connection: keep-alive, as page loads do.
 var safariMacSubresourceOrder = []string{
 	"Host",
-	"Connection",
 	"Accept",
 	"Pragma",
 	"Sec-Fetch-Site",
@@ -433,14 +437,16 @@ var safariMacSubresourceOrder = []string{
 	"Proxy-Authorization",
 	"Range",
 	"Referer",
+	"Connection",
 }
 
 // safariIOSSubresourceOrder is the captured Safari 27 iPhone fetch order,
 // where Sec-Fetch-Site precedes Pragma. Fields after Accept-Encoding are not
-// captured and keep fphttp v1's lexical placement.
+// captured and keep fphttp v1's lexical placement. Connection ends the
+// order as in safariMacSubresourceOrder; no iPhone subresource was captured
+// on HTTP/1.1.
 var safariIOSSubresourceOrder = []string{
 	"Host",
-	"Connection",
 	"Accept",
 	"Sec-Fetch-Site",
 	"Pragma",
@@ -461,4 +467,5 @@ var safariIOSSubresourceOrder = []string{
 	"Proxy-Authorization",
 	"Range",
 	"Referer",
+	"Connection",
 }
