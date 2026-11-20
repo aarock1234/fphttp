@@ -39,9 +39,19 @@ jobs:
           fi
           echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
+      # Findings, such as a new browser major with no span yet, do not stop
+      # the sync: they go into the pull request body, which opens as a draft.
       - name: Verify profiles
+        id: verify
         if: steps.sync.outputs.changed == 'true'
-        run: go run ./internal/cmd/verifyprofiles -cache-date "${{ steps.sync.outputs.date }}"
+        run: |
+          findings="$RUNNER_TEMP/findings.txt"
+          if go run ./internal/cmd/verifyprofiles -cache-date "${{ steps.sync.outputs.date }}" > "$findings"; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$findings"
 
       - name: Build
         if: steps.sync.outputs.changed == 'true'
@@ -55,6 +65,27 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         run: git diff --check
 
+      - name: Write PR body
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          {
+            echo "Regenerated \`internal/catalog/builds_gen.go\` from official browser release feeds through ${{ steps.sync.outputs.date }}."
+            echo
+            echo "Each row is the newest published build of a browser major version on one platform. Production builds, formatting checks, static analysis, and patch checks passed."
+            echo
+            if [ "${{ steps.verify.outputs.clean }}" = "true" ]; then
+              echo "Profile verification passed."
+            else
+              echo "Profile verification failed, so this PR is a draft. Update the catalog on this branch before merging."
+              echo
+              echo '```text'
+              cat "$RUNNER_TEMP/findings.txt"
+              echo '```'
+              echo
+              echo "Full output: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            fi
+          } > "$RUNNER_TEMP/body.md"
+
       - name: Create PR
         if: steps.sync.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v8
@@ -62,8 +93,6 @@ jobs:
           commit-message: "sync: update browser profiles ${{ steps.sync.outputs.date }}"
           branch: sync/profiles
           title: "sync: update browser profiles ${{ steps.sync.outputs.date }}"
-          body: |
-            Regenerated `internal/catalog/builds_gen.go` from official browser release feeds through ${{ steps.sync.outputs.date }}.
-
-            Each row is the newest published build of a browser major version on one platform. Profile verification, production builds, formatting checks, static analysis, and patch checks must pass before this PR is created.
+          body-path: ${{ runner.temp }}/body.md
+          draft: ${{ steps.verify.outputs.clean == 'true' && 'false' || 'always-true' }}
           delete-branch: true
