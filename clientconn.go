@@ -230,6 +230,10 @@ func (cc *ClientConn) Err() error {
 }
 
 func validateClientConnRequest(req *Request) error {
+	if err := req.Credentials.validate(); err != nil {
+		return err
+	}
+
 	if req.URL == nil {
 		return errors.New("http: nil Request.URL")
 	}

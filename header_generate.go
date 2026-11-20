@@ -157,10 +157,10 @@ func (g *fieldGenerator) requestFields() {
 	}
 }
 
-// connectionField adds Connection: keep-alive, which Chromium and Firefox
-// send on every HTTP/1.1 request; HTTP/2 drops the field. It is not added
-// when the request or the Transport closes the connection, because Go then
-// sends Connection: close. A generated field is recorded so a Chromium
+// connectionField adds Connection: keep-alive, which every browser family
+// sends on HTTP/1.1 requests; HTTP/2 drops the field. It is not added when
+// the request or the Transport closes the connection, because Go then sends
+// Connection: close. A generated field is recorded so a Chromium
 // profile can send Proxy-Connection instead (see withProxyConnection).
 func (g *fieldGenerator) connectionField() {
 	if !g.keepsConnectionAlive() {
@@ -172,23 +172,13 @@ func (g *fieldGenerator) connectionField() {
 	}
 }
 
-// keepsConnectionAlive reports whether the release asks to keep this
-// request's HTTP/1.1 connection open. Safari sends no Connection field. A
-// WebSocket handshake never gets one: its Connection: Upgrade belongs to
-// the WebSocket library, and keep-alive in its place would break the
-// upgrade.
+// keepsConnectionAlive reports whether the request asks to keep its
+// HTTP/1.1 connection open, as every browser family does unless the request
+// or the Transport closes the connection. A WebSocket handshake never gets
+// the field: its Connection: Upgrade belongs to the WebSocket library, and
+// keep-alive in its place would break the upgrade.
 func (g *fieldGenerator) keepsConnectionAlive() bool {
-	if g.webSocket() {
-		return false
-	}
-
-	switch g.entry.Family {
-	case catalog.FamilyChromium, catalog.FamilyFirefox:
-		return g.keepAlive && !g.request.Close
-
-	default:
-		return false
-	}
+	return !g.webSocket() && g.keepAlive && !g.request.Close
 }
 
 // http2OnlyFields records the fields the release appends last on HTTP/2

@@ -142,6 +142,15 @@ applies the browser's cookie rules. Headers you set yourself always win. The zer
 | `DestinationIframe`                                         | Pages inside frames                          |
 | `DestinationWebSocket`                                      | WebSocket handshakes, detected automatically |
 
+For a cross-origin `fetch()` that needs cookies, also set:
+
+```go
+req.Credentials = http.CredentialsInclude
+```
+
+This sends and stores eligible jar cookies across origins, including redirects. Leave it unset for the
+destination's defaults, or use `CredentialsSameOrigin` or `CredentialsOmit` to restrict jar cookies.
+
 Header order and HTTP/1.1 casing can also be set per request, without opening new connections:
 
 ```go

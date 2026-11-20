@@ -4,12 +4,13 @@ package http
 // before sending it. The request's credentials mode must allow cookies for
 // its URL (see carriesCredentials).
 //
-// A navigation, including the zero Destination, always gets them, exactly
-// as upstream, where AddCookie replaces a present but empty Cookie field.
+// When credentials are allowed, a navigation, including the zero
+// Destination, gets them even with a present but empty Cookie field, which
+// AddCookie replaces as upstream does.
 // Any other request declines them with such a field, for example
 // Header["Cookie"] = []string{""} (see declinesJarCookies). The Client
 // reads only the caller's Destination, never a detected one, so a
-// request with a zero Destination always behaves as upstream.
+// request with a zero Destination and CredentialsDefault behaves as upstream.
 func (r *Request) sendsJarCookies() bool {
 	if !r.carriesCredentials() {
 		return false
@@ -45,18 +46,17 @@ func (r *Request) storesJarCookies() bool {
 	return r.carriesCredentials()
 }
 
-// carriesCredentials reports whether the credentials mode that r's
-// Destination (see Request.destination) implies allows cookies for r's URL:
-// always for include, which WebSocket handshakes use, never
-// for omit, and for same-origin only when Initiator is nil, a request the
-// user started, or has the same origin as URL. A Client evaluates it for
-// every redirect hop, so a fetch that is redirected to another origin stops
-// carrying cookies there.
+// carriesCredentials reports whether r's effective credentials mode allows
+// cookies for r's URL: always for include, never for omit, and for
+// same-origin only when Initiator is nil (a request the user started) or
+// has the same origin as URL. A Client evaluates it for every redirect
+// hop, so a same-origin fetch that is redirected to another
+// origin stops carrying cookies there.
 func (r *Request) carriesCredentials() bool {
-	switch r.Destination.credentials() {
-	case credentialsInclude:
+	switch r.credentialsMode() {
+	case CredentialsInclude:
 		return true
-	case credentialsSameOrigin:
+	case CredentialsSameOrigin:
 		return r.Initiator == nil || sameOrigin(r.Initiator, r.URL)
 	default:
 		return false
