@@ -190,7 +190,9 @@ var (
 // its Chromium major.
 //
 // Corrected against Chromium source: 130 still sent Kyber (UseMLKEM was off),
-// and 138 to 141 kept ML-KEM and the new ALPS code point.
+// and 138 to 141 kept ML-KEM and the new ALPS code point. From 158 the
+// TlsGreaseSigalgs feature is gone, but signature algorithm GREASE remains:
+// BoringSSL sends it whenever GREASE is enabled.
 var chromeDesktopSpans = []span{
 	{
 		first: 108,
@@ -239,7 +241,7 @@ var chromeDesktopSpans = []span{
 	},
 	{
 		first: 153,
-		last:  156,
+		last:  159,
 		wire:  chromium153,
 	},
 }
@@ -294,7 +296,7 @@ var chromeAndroidSpans = []span{
 	},
 	{
 		first: 153,
-		last:  156,
+		last:  159,
 		wire:  chromium153,
 	},
 }
@@ -303,7 +305,7 @@ var chromeAndroidSpans = []span{
 var braveOverrideSpans = []span{
 	{
 		first: 152,
-		last:  156,
+		last:  159,
 		wire:  brave152,
 	},
 }

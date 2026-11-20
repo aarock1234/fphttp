@@ -317,7 +317,7 @@ var firefoxDesktopSpans = []span{
 	},
 	{
 		first: 156,
-		last:  158,
+		last:  160,
 		wire:  firefox156,
 	},
 }
@@ -362,7 +362,7 @@ var firefoxAndroidSpans = []span{
 	},
 	{
 		first: 156,
-		last:  158,
+		last:  160,
 		wire:  firefoxAndroid156,
 	},
 }

@@ -92,8 +92,9 @@ type chromiumSource struct {
 }
 
 // fetchChromiumSource reads the files every Chromium derivation needs at
-// tag, and ssl_config_service_defaults.cc as well when the socket takes its
-// ECH mode from the config service.
+// tag, ssl_config_service_defaults.cc as well when the socket takes its ECH
+// mode from the config service, and BoringSSL's extensions.cc when the
+// socket no longer switches signature algorithm GREASE itself.
 func fetchChromiumSource(ctx context.Context, sources *releasefetch.Fetcher, tag string) (chromiumSource, error) {
 	revision := chromiumRevision(tag)
 
@@ -109,6 +110,15 @@ func fetchChromiumSource(ctx context.Context, sources *releasefetch.Fetcher, tag
 		}
 
 		files[chromiumSSLDefaultsPath] = defaults
+	}
+
+	if sigalgGREASERetired(files[chromiumSocketPath], tag) {
+		extensions, err := fetchBoringSSLExtensions(ctx, sources, revision)
+		if err != nil {
+			return chromiumSource{}, err
+		}
+
+		files[boringSSLExtensionPath] = extensions
 	}
 
 	source := chromiumSource{
@@ -186,7 +196,7 @@ func deriveChromium(
 		ech:             flags.enabled("EncryptedClientHello", echByDefault(files)),
 		newALPS:         flags.enabled("UseNewAlpsCodepointHttp2", false),
 		mldsa:           flags.enabled("TlsMldsaSignatures", verifyPrefsListMLDSA(socket)),
-		signatureGREASE: flags.enabled("TlsGreaseSigalgs", false),
+		signatureGREASE: flags.enabled("TlsGreaseSigalgs", sigalgGREASEByDefault(files)),
 		priorityHeader:  flags.enabled("PriorityHeader", priorityFieldByDefault(files[chromiumSpdyUtilsPath])),
 		trustAnchors:    flags.enabled("TLSTrustAnchorIDs", false) && flags.enabled("NonMtcTrustAnchorIDs", false),
 	}

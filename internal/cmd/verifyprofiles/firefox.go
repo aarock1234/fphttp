@@ -24,6 +24,10 @@ const (
 	geckoViewPrefsPath    = "mobile/android/app/geckoview-prefs.js"
 )
 
+// firefoxGitHubMirror is the raw file prefix of Mozilla's GitHub repository,
+// followed by a tag.
+const firefoxGitHubMirror = "https://raw.githubusercontent.com/mozilla-firefox/firefox/"
+
 // firefoxSourcePaths lists the files every Firefox derivation reads.
 var firefoxSourcePaths = []string{
 	firefoxPrefsPath,
@@ -108,30 +112,45 @@ type firefoxFeatures struct {
 // such as FIREFOX_150_0_3_RELEASE or FIREFOX_128_14_0esr_RELEASE. The GitHub
 // mirror lacks some release tags, such as FIREFOX_115_0_3_RELEASE, so
 // Mozilla's Mercurial release repository is the fallback.
-func firefoxRevision(version string, esr bool) sourceRevision {
-	tag := "FIREFOX_" + strings.ReplaceAll(version, ".", "_")
+//
+// Android releases are read at their own tag first, such as
+// FIREFOX-ANDROID_158_0_2_RELEASE, because Android-only dot releases have
+// no desktop tag. Only the GitHub mirror carries Android tags, so the
+// desktop tag of the same version remains the fallback.
+func firefoxRevision(version string, esr, android bool) sourceRevision {
+	release := strings.ReplaceAll(version, ".", "_")
 	repository := "mozilla-release"
 
 	if esr {
-		tag += "esr"
+		release += "esr"
 		repository = fmt.Sprintf("mozilla-esr%d", versionMajor(version))
 	}
 
-	tag += "_RELEASE"
+	release += "_RELEASE"
 
-	return sourceRevision{
-		name: "firefox " + tag,
+	desktopTag := "FIREFOX_" + release
+	revision := sourceRevision{
+		name: "firefox " + desktopTag,
 		mirrors: []string{
-			"https://raw.githubusercontent.com/mozilla-firefox/firefox/" + tag + "/",
-			"https://hg.mozilla.org/releases/" + repository + "/raw-file/" + tag + "/",
+			firefoxGitHubMirror + desktopTag + "/",
+			"https://hg.mozilla.org/releases/" + repository + "/raw-file/" + desktopTag + "/",
 		},
 	}
+
+	if android {
+		androidTag := "FIREFOX-ANDROID_" + release
+
+		revision.name = "firefox " + androidTag
+		revision.mirrors = slices.Insert(revision.mirrors, 0, firefoxGitHubMirror+androidTag+"/")
+	}
+
+	return revision
 }
 
 // verifyFirefox derives the wire of a target's Firefox release and compares
 // it with every release of that major on the target's platforms.
 func verifyFirefox(ctx context.Context, sources *releasefetch.Fetcher, t target) []finding {
-	revision := firefoxRevision(t.representative.Version, t.key.family == familyFirefoxESR)
+	revision := firefoxRevision(t.representative.Version, t.key.family == familyFirefoxESR, t.key.android)
 
 	paths := firefoxSourcePaths
 	if t.key.android {
