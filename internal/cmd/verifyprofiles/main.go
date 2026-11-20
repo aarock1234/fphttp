@@ -19,11 +19,11 @@
 // wires are not derived. Edge is checked through the Chromium major it
 // shares with Chrome.
 //
-// Every fetched file is cached on disk as <cache>/<date>/<sha256(url)>.data,
-// the layout syncprofiles uses, and reused by later runs with the same
-// -cache-date:
+// Every file is read at a release tag or commit, so its content never
+// changes. Each one is cached on disk as <cache>/<sha256(url)>.data and
+// reused by every later run without revalidation:
 //
-//	go run ./internal/cmd/verifyprofiles -cache-date 2026-10-13
+//	go run ./internal/cmd/verifyprofiles
 package main
 
 import (
@@ -45,9 +45,8 @@ const defaultTimeout = 20 * time.Minute
 
 // options holds the command-line flags.
 type options struct {
-	cacheRoot string
-	cacheDate string
-	timeout   time.Duration
+	cacheDir string
+	timeout  time.Duration
 }
 
 func main() {
@@ -72,7 +71,7 @@ func run() error {
 	ctx, cancel := context.WithTimeout(ctx, opts.timeout)
 	defer cancel()
 
-	sources := newFetcher(opts.responseCacheDir())
+	sources := newFetcher(opts.cacheDir)
 
 	findings := checkProfiles()
 	findings = append(findings, checkCoverage()...)
@@ -101,17 +100,12 @@ func run() error {
 func parseOptions() (options, error) {
 	var opts options
 
-	flag.StringVar(&opts.cacheRoot, "cache", defaultCacheRoot(), "response cache directory with one subdirectory per date, shared with syncprofiles; empty disables caching")
-	flag.StringVar(&opts.cacheDate, "cache-date", time.Now().UTC().Format(time.DateOnly), "cache subdirectory to read and fill (YYYY-MM-DD); the -through date of a syncprofiles run reuses its cache")
+	flag.StringVar(&opts.cacheDir, "cache", defaultCacheDir(), "cache directory for source files, which never expire; empty disables caching")
 	flag.DurationVar(&opts.timeout, "timeout", defaultTimeout, "deadline for the complete run, including every fetch")
 	flag.Parse()
 
 	if flag.NArg() > 0 {
 		return options{}, fmt.Errorf("unexpected arguments: %q", flag.Args())
-	}
-
-	if _, err := time.Parse(time.DateOnly, opts.cacheDate); err != nil {
-		return options{}, fmt.Errorf("parse -cache-date: %w", err)
 	}
 
 	if opts.timeout <= 0 {
@@ -121,23 +115,13 @@ func parseOptions() (options, error) {
 	return opts, nil
 }
 
-// defaultCacheRoot returns the per-user cache directory syncprofiles uses,
-// or "" when the platform defines none.
-func defaultCacheRoot() string {
+// defaultCacheDir returns the per-user cache directory for source files, or
+// "" when the platform defines none.
+func defaultCacheDir() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return ""
 	}
 
-	return filepath.Join(dir, "fphttp", "syncprofiles")
-}
-
-// responseCacheDir returns the cache directory for -cache-date, or "" when
-// caching is disabled.
-func (o options) responseCacheDir() string {
-	if o.cacheRoot == "" {
-		return ""
-	}
-
-	return filepath.Join(o.cacheRoot, o.cacheDate)
+	return filepath.Join(dir, "fphttp", "verifyprofiles")
 }

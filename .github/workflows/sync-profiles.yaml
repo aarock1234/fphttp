@@ -19,10 +19,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -39,6 +39,18 @@ jobs:
           fi
           echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
+      # Verification reads browser source at release tags, which never
+      # change, so the files carry over between runs. The build list decides
+      # which files are read; a new list restores the newest earlier cache
+      # and saves it with the files it adds.
+      - name: Cache browser source
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/fphttp/verifyprofiles
+          key: verifyprofiles-${{ hashFiles('internal/catalog/builds_gen.go') }}
+          restore-keys: verifyprofiles-
+
       # Findings, such as a new browser major with no span yet, do not stop
       # the sync: they go into the pull request body, which opens as a draft.
       - name: Verify profiles
@@ -46,7 +58,7 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         run: |
           findings="$RUNNER_TEMP/findings.txt"
-          if go run ./internal/cmd/verifyprofiles -cache-date "${{ steps.sync.outputs.date }}" > "$findings"; then
+          if go run ./internal/cmd/verifyprofiles > "$findings"; then
             echo "clean=true" >> "$GITHUB_OUTPUT"
           else
             echo "clean=false" >> "$GITHUB_OUTPUT"

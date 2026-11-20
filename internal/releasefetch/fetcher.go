@@ -1,6 +1,7 @@
 // Package releasefetch downloads browser release feeds and source files for
-// the catalog tools. It bounds concurrent requests and shares one on-disk
-// response cache between syncprofiles and verifyprofiles.
+// the catalog tools. It bounds concurrent requests and keeps responses in an
+// on-disk cache: syncprofiles caches feeds per day, and verifyprofiles keeps
+// tag-pinned source files indefinitely.
 //
 // It imports only the standard library, so the tools still build while the
 // generated catalog is broken.
