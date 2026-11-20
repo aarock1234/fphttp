@@ -7,8 +7,15 @@ import (
 	"time"
 )
 
-// chromeFeedLimit is the most releases one chromiumdash query returns.
-const chromeFeedLimit = 1000
+const (
+	// chromeFeedLimit is the most releases collected for one platform.
+	chromeFeedLimit = 1000
+
+	// chromeFeedPageSize is the releases one chromiumdash query returns.
+	// chromiumdash answers in time proportional to the page size, so the
+	// limit is fetched as concurrent pages rather than in one slow query.
+	chromeFeedPageSize = 100
+)
 
 // chromeRelease is one entry of a chromiumdash release feed.
 type chromeRelease struct {
@@ -58,13 +65,7 @@ func (c *collector) chrome(ctx context.Context) ([]release, error) {
 
 // chromePlatform collects the Stable channel releases of one platform.
 func (c *collector) chromePlatform(ctx context.Context, target chromePlatform) ([]release, error) {
-	feedURL := fmt.Sprintf(
-		"https://chromiumdash.appspot.com/fetch_releases?channel=Stable&num=%d&platform=%s",
-		chromeFeedLimit,
-		target.feedName,
-	)
-
-	entries, err := c.fetcher.FetchJSON[[]chromeRelease](ctx, feedURL)
+	entries, err := c.chromeFeed(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -92,8 +93,34 @@ func (c *collector) chromePlatform(ctx context.Context, target chromePlatform) (
 	return releases, nil
 }
 
-// checkChromeFeedReach fails when a full feed page does not reach back past
-// the start of the window, because older releases would be missing.
+// chromeFeed returns the newest chromeFeedLimit Stable releases of one
+// platform, newest first, fetched as concurrent pages.
+func (c *collector) chromeFeed(ctx context.Context, target chromePlatform) ([]chromeRelease, error) {
+	offsets := make([]int, 0, chromeFeedLimit/chromeFeedPageSize)
+	for offset := 0; offset < chromeFeedLimit; offset += chromeFeedPageSize {
+		offsets = append(offsets, offset)
+	}
+
+	pages, err := mapConcurrently(ctx, offsets, func(ctx context.Context, offset int) ([]chromeRelease, error) {
+		pageURL := fmt.Sprintf(
+			"https://chromiumdash.appspot.com/fetch_releases?channel=Stable&num=%d&offset=%d&platform=%s",
+			chromeFeedPageSize,
+			offset,
+			target.feedName,
+		)
+
+		return c.fetcher.FetchJSON[[]chromeRelease](ctx, pageURL)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return slices.Concat(pages...), nil
+}
+
+// checkChromeFeedReach fails when a feed that fills chromeFeedLimit does not
+// reach back past the start of the window, because older releases would be
+// missing.
 func (c *collector) checkChromeFeedReach(target chromePlatform, entries []chromeRelease) error {
 	if len(entries) < chromeFeedLimit {
 		return nil
