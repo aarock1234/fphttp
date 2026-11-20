@@ -375,7 +375,7 @@ var builds = []build{
 	{browser: Edge, platform: Android, version: "152.0.4191.65", engine: "", released: "2026-09-08"},
 	{browser: Edge, platform: Android, version: "153.0.4234.49", engine: "", released: "2026-09-21"},
 	{browser: Edge, platform: Android, version: "154.0.4258.38", engine: "", released: "2026-09-29"},
-	{browser: Edge, platform: Android, version: "155.0.4283.48", engine: "", released: "2026-10-12"},
+	{browser: Edge, platform: Android, version: "155.0.4283.61", engine: "", released: "2026-10-19"},
 	{browser: Brave, platform: Windows, version: "1.46.153", engine: "108.0.5359.128", released: "2023-01-06"},
 	{browser: Brave, platform: Windows, version: "1.47.186", engine: "109.0.5414.119", released: "2023-01-25"},
 	{browser: Brave, platform: Windows, version: "1.48.171", engine: "110.0.5481.177", released: "2023-02-23"},
